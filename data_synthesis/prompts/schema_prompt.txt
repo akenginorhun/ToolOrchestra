@@ -1,0 +1,108 @@
+Here is the database schema for a restaurant
+```
+{
+    "menu_board": {
+        "AAAAAAA": {  // dish_ref
+            "title": "Dish title",
+            "dish_ref": "AAAAAAA",
+            "selections": {
+                "BBBBBBB": {  // plate_ref
+                    "plate_ref": "BBBBBBB",
+                    "modifiers": {
+                        "spice_level": "...",
+                        "portion": "...",
+                        "protein": "...",
+                        "preparation": "..."
+                    },
+                    "served_today": "...", // true or false
+                    "cost": ...
+                }
+            }
+        }
+    },
+    "patron_registry": {
+        "CCCCCCC": {  // guest_ref
+            "guest_ref": "CCCCCCC",
+            "identity": {
+                "given": "...",
+                "family": "..."
+            },
+            "location": {
+                "line_one": "...",
+                "line_two": "...",
+                "municipality": "...",
+                "nation": "...",
+                "province": "...",
+                "postal_code": "..."
+            },
+            "contact_email": "...",
+            "saved_instruments": {
+                "DDDDDDD": {  // instrument_ref
+                    "origin": "...",
+                    "instrument_ref": "DDDDDDD",
+                    "metadata": {
+                        "issuer": "...",
+                        "tail_digits": "..."
+                    }
+                }
+            },
+            "ticket_log": [
+                "..."
+            ]
+        }
+    },
+    "service_tickets": {
+        "EEEEEEE": {  // ticket_ref
+            "ticket_ref": "EEEEEEE",
+            "guest_ref": "...",
+            "service_mode": "...",  // dine_in, takeout, delivery
+            "dropoff": {  // only for delivery
+                "line_one": "...",
+                "line_two": "...",
+                "municipality": "...",
+                "nation": "...",
+                "province": "...",
+                "postal_code": "..."
+            },
+            "table_info": {  // only for dine-in
+                "zone": "...",
+                "table_no": "...",
+                "seat_count": ...
+            },
+            "line_entries": [
+                {
+                    "label": "...",
+                    "dish_ref": "...",
+                    "plate_ref": "...",
+                    "cost": ...,
+                    "mods": {
+                        "heat": "...",
+                        "sauce": "...",
+                        "side": "..."
+                    }
+                }
+            ],
+            "state": "...",
+            "prep_batches": [
+                {
+                    "parcel_tags": [
+                        "..."
+                    ],
+                    "plate_refs": [
+                        "..."
+                    ]
+                }
+            ],
+            "charges": [
+                {
+                    "kind": "...",
+                    "total": ...,
+                    "instrument_ref": "..."
+                }
+            ]
+        }
+    }
+}
+```
+
+Generate another schema of similar formats for a bank. Use the keys clients, transactions, loans and beneficiaries.

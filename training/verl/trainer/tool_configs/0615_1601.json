@@ -1,0 +1,12 @@
+[
+  {
+    "id": "1",
+    "name": "query writer",
+    "description": "select it when there is insufficient context in documents, so use query writer to formulate a detailed query for search."
+  },
+  {
+    "id": "2",
+    "name": "answer generator",
+    "description": "select it when there is sufficient context in documents without redundancy, so generator can provide an answer to the question."
+  }
+]

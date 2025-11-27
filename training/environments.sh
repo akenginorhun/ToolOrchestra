@@ -1,0 +1,4 @@
+export EXPERIMENT_NAME1=se_t4_1
+export EXPERIMENT_NAME2=se_t4_2
+export EXPERIMENT_NAME3=se_t4_3
+export HF_HOME=cache

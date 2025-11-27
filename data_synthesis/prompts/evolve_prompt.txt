@@ -1,0 +1,1603 @@
+Functions:
+```
+"""Toolkit for the bank domain."""
+from typing import List, Dict, Optional
+import json
+from datetime import datetime, date
+
+from tau2.environment.toolkit import ToolKitBase, ToolType, is_tool
+from tau2.domains.bank.data_model import (
+    Account,
+    AccountStatus,
+    BankAddress,
+    BankDB,
+    Beneficiary,
+    BeneficiaryStatus,
+    Card,
+    CardStatus,
+    Client,
+    Loan,
+    LoanPaymentScheduleEntry,
+    LoanStatus,
+    Transaction,
+    TransactionDirection,
+    TransactionMethod,
+    TransactionStatus,
+)
+
+
+class BankTools(ToolKitBase):
+    """Frequently-used tools for the bank domain."""
+
+    db: BankDB
+
+    def __init__(self, db: BankDB) -> None:
+        super().__init__(db)
+
+    # -----------------------
+    # Internal helper methods
+    # -----------------------
+    def _get_client(self, client_id: str) -> Client:
+        """Get a client from the database."""
+        if client_id not in self.db.clients:
+            raise ValueError("Client not found")
+        return self.db.clients[client_id]
+
+    def _get_beneficiary(self, beneficiary_id: str) -> Beneficiary:
+        """Get a beneficiary from the database."""
+        if beneficiary_id not in self.db.beneficiaries:
+            raise ValueError("Beneficiary not found")
+        return self.db.beneficiaries[beneficiary_id]
+
+    def _get_loan(self, loan_id: str) -> Loan:
+        """Get a loan from the database."""
+        if loan_id not in self.db.loans:
+            raise ValueError("Loan not found")
+        return self.db.loans[loan_id]
+
+    def _get_transaction(self, transaction_id: str) -> Transaction:
+        """Get a transaction from the database."""
+        if transaction_id not in self.db.transactions:
+            raise ValueError("Transaction not found")
+        return self.db.transactions[transaction_id]
+
+    def _find_account_owner(self, account_id: str) -> tuple[str, Account]:
+        """Find the owner client_id and account object for a given account_id."""
+        for client_id, client in self.db.clients.items():
+            if account_id in client.accounts:
+                return client_id, client.accounts[account_id]
+        raise ValueError("Account not found")
+
+    def _find_card_owner(self, card_id: str) -> tuple[str, Card]:
+        """Find the owner client_id and card object for a given card_id."""
+        for client_id, client in self.db.clients.items():
+            if card_id in client.cards:
+                return client_id, client.cards[card_id]
+        raise ValueError("Card not found")
+
+    def _assert_account_active(self, account: Account) -> None:
+        """Ensure the account is active."""
+        if account.status != "active":
+            raise ValueError("Account must be active for this operation")
+
+    def _assert_card_active(self, card: Card) -> None:
+        """Ensure the card is active."""
+        if card.status != "active":
+            raise ValueError("Card must be active for this operation")
+
+    def _generate_transaction_id(self) -> str:
+        """Generate a new transaction ID."""
+        next_id_num = len(self.db.transactions) + 1
+        return f"TXN-{next_id_num:06d}"
+
+    def _today_str(self) -> str:
+        """Return today's date string in ISO format (YYYY-MM-DD)."""
+        return date.today().isoformat()
+
+    def _now_ts(self) -> str:
+        """Return current timestamp in ISO 8601 format with Z suffix."""
+        return datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+    # -------------
+    # Generic tools
+    # -------------
+    @is_tool(ToolType.GENERIC)
+    def calculate(self, expression: str) -> str:
+        """
+        Calculate the result of a mathematical expression.
+
+        Args:
+            expression: The mathematical expression to calculate, such as '2 + 2'.
+                        The expression can contain numbers, operators (+, -, *, /), parentheses, and spaces.
+
+        Returns:
+            The result of the mathematical expression (rounded to 2 decimals).
+
+        Raises:
+            ValueError: If the expression is invalid or contains invalid characters.
+        """
+        if not all(char in "0123456789+-*/(). " for char in expression):
+            raise ValueError("Invalid characters in expression")
+        return str(round(float(eval(expression, {"__builtins__": None}, {})), 2))
+
+    @is_tool(ToolType.GENERIC)
+    def transfer_to_human_agents(self, summary: str) -> str:
+        """
+        Transfer the user to a human agent, with a summary of the user's issue.
+        Only transfer if
+         - the user explicitly asks for a human agent, or
+         - given the policy and the available tools, you cannot solve the user's issue.
+
+        Args:
+            summary: A concise summary of the user's issue.
+
+        Returns:
+            A message indicating the user has been transferred to a human agent.
+        """
+        return "Transfer successful"
+
+    # ----------
+    # Read tools
+    # ----------
+    @is_tool(ToolType.READ)
+    def get_client_details(self, client_id: str) -> Client:
+        """Get the details of a client, including their accounts, cards, loans, and beneficiaries.
+
+        Args:
+            client_id: The client identifier, such as 'CLNT-0001'.
+
+        Returns:
+            Client: The client details.
+
+        Raises:
+            ValueError: If the client is not found.
+        """
+        return self._get_client(client_id)
+
+    @is_tool(ToolType.READ)
+    def get_account_details(self, account_id: str) -> Account:
+        """Get the details of a bank account.
+
+        Args:
+            account_id: The account identifier, such as 'ACCT-0001'.
+
+        Returns:
+            Account: The account details.
+
+        Raises:
+            ValueError: If the account is not found.
+        """
+        _, account = self._find_account_owner(account_id)
+        return account
+
+    @is_tool(ToolType.READ)
+    def get_card_details(self, card_id: str) -> Card:
+        """Get the details of a card.
+
+        Args:
+            card_id: The card identifier, such as 'CARD-0001'.
+
+        Returns:
+            Card: The card details.
+
+        Raises:
+            ValueError: If the card is not found.
+        """
+        _, card = self._find_card_owner(card_id)
+        return card
+
+    @is_tool(ToolType.READ)
+    def get_loan_details(self, loan_id: str) -> Loan:
+        """Get the details of a loan.
+
+        Args:
+            loan_id: The loan identifier, such as 'LOAN-0001'.
+
+        Returns:
+            Loan: The loan details.
+
+        Raises:
+            ValueError: If the loan is not found.
+        """
+        return self._get_loan(loan_id)
+
+    @is_tool(ToolType.READ)
+    def get_transaction_details(self, transaction_id: str) -> Transaction:
+        """Get the details of a transaction.
+
+        Args:
+            transaction_id: The transaction identifier, such as 'TXN-000001'.
+
+        Returns:
+            Transaction: The transaction details.
+
+        Raises:
+            ValueError: If the transaction is not found.
+        """
+        return self._get_transaction(transaction_id)
+
+    @is_tool(ToolType.READ)
+    def list_client_accounts(self, client_id: str) -> str:
+        """List the accounts for a client, with basic information.
+
+        Args:
+            client_id: The client identifier, such as 'CLNT-0001'.
+
+        Returns:
+            str: A JSON string mapping account_id to a summary dict (type, status, current_balance).
+        """
+        client = self._get_client(client_id)
+        mapping = {
+            account_id: {
+                "type": acct.type,
+                "status": acct.status,
+                "current_balance": acct.balance.current,
+            }
+            for account_id, acct in client.accounts.items()
+        }
+        return json.dumps(mapping, sort_keys=True)
+
+    @is_tool(ToolType.READ)
+    def list_client_cards(self, client_id: str) -> str:
+        """List the cards for a client, with basic information.
+
+        Args:
+            client_id: The client identifier, such as 'CLNT-0001'.
+
+        Returns:
+            str: A JSON string mapping card_id to a summary dict (type, status, last_four).
+        """
+        client = self._get_client(client_id)
+        mapping = {
+            card_id: {
+                "type": card.type,
+                "status": card.status,
+                "last_four": card.extra_info.last_four,
+            }
+            for card_id, card in client.cards.items()
+        }
+        return json.dumps(mapping, sort_keys=True)
+
+    @is_tool(ToolType.READ)
+    def list_client_beneficiaries(self, client_id: str) -> str:
+        """List the beneficiaries for a client.
+
+        Args:
+            client_id: The client identifier, such as 'CLNT-0001'.
+
+        Returns:
+            str: A JSON string mapping beneficiary_id to display_name/status.
+        """
+        client = self._get_client(client_id)
+        mapping: Dict[str, Dict[str, str]] = {}
+        for ben_id in client.beneficiary_ids:
+            if ben_id in self.db.beneficiaries:
+                ben = self.db.beneficiaries[ben_id]
+                display_name = (
+                    ben.name.display_name
+                    or ben.name.business_name
+                    or f"{(ben.name.first_name or '')} {(ben.name.last_name or '')}".strip()
+                )
+                mapping[ben_id] = {
+                    "display_name": display_name,
+                    "status": ben.status,
+                    "verification_status": ben.verification.status,
+                }
+        return json.dumps(mapping, sort_keys=True)
+
+    @is_tool(ToolType.READ)
+    def list_account_transactions(self, account_id: str, limit: int = 50) -> str:
+        """List recent transaction IDs for an account.
+
+        Args:
+            account_id: The account identifier, such as 'ACCT-0001'.
+            limit: Maximum number of transactions to return (default: 50).
+
+        Returns:
+            str: A JSON array of transaction IDs sorted by timestamp descending.
+
+        Raises:
+            ValueError: If the account is not found.
+        """
+        self._find_account_owner(account_id)  # validates existence
+        txns = [
+            t for t in self.db.transactions.values() if t.account_id == account_id
+        ]
+        # Sort by timestamp descending (ISO format)
+        txns.sort(key=lambda t: t.timestamp, reverse=True)
+        ids = [t.transaction_id for t in txns[: max(1, limit)]]
+        return json.dumps(ids)
+
+    @is_tool(ToolType.READ)
+    def find_client_id_by_email(self, email: str) -> str:
+        """Find client identifier by contact email.
+
+        Args:
+            email: The email of the client, such as 'client@example.com'.
+
+        Returns:
+            str: The client_id if found.
+
+        Raises:
+            ValueError: If the client is not found.
+        """
+        for client_id, client in self.db.clients.items():
+            if client.contact.email.lower() == email.lower():
+                return client_id
+        raise ValueError("Client not found")
+
+    @is_tool(ToolType.READ)
+    def find_client_id_by_name_zip(self, first_name: str, last_name: str, postal_code: str) -> str:
+        """Find client identifier by name and postal code. Use when email is unknown or not found.
+
+        Args:
+            first_name: The client's first name, such as 'John'.
+            last_name: The client's last name, such as 'Doe'.
+            postal_code: The postal code, such as '12345'.
+
+        Returns:
+            str: The client_id if found.
+
+        Raises:
+            ValueError: If the client is not found.
+        """
+        for client_id, client in self.db.clients.items():
+            if (
+                client.name.first_name.lower() == first_name.lower()
+                and client.name.last_name.lower() == last_name.lower()
+                and client.address.zip == postal_code
+            ):
+                return client_id
+        raise ValueError("Client not found")
+
+    # -----------
+    # Write tools
+    # -----------
+    @is_tool(ToolType.WRITE)
+    def transfer_between_accounts(
+        self,
+        client_id: str,
+        from_account_id: str,
+        to_account_id: str,
+        amount: float,
+        description: str,
+    ) -> List[Transaction]:
+        """Transfer funds internally between two accounts owned by the same client.
+        The agent must explain the transfer and ask for explicit user confirmation (yes/no) to proceed.
+
+        Constraints:
+        - Both accounts must be active and belong to the same client.
+        - Amount must be positive and not exceed the available balance of the source account.
+        - Currency must match between the two accounts.
+
+        Args:
+            client_id: The client identifier, such as 'CLNT-0001'.
+            from_account_id: Source account ID.
+            to_account_id: Destination account ID.
+            amount: Transfer amount (must be positive).
+            description: Memo/description for the transfer.
+
+        Returns:
+            List[Transaction]: The debit (source) and credit (destination) transactions.
+
+        Raises:
+            ValueError: If any validation fails.
+        """
+        if amount <= 0:
+            raise ValueError("Transfer amount must be positive")
+
+        # Validate client and accounts
+        client = self._get_client(client_id)
+        src_owner_id, src_account = self._find_account_owner(from_account_id)
+        dst_owner_id, dst_account = self._find_account_owner(to_account_id)
+        if src_owner_id != client_id or dst_owner_id != client_id:
+            raise ValueError("Both accounts must belong to the specified client")
+        self._assert_account_active(src_account)
+        self._assert_account_active(dst_account)
+        if src_account.currency != dst_account.currency:
+            raise ValueError("Source and destination accounts must have the same currency")
+
+        if src_account.balance.available < amount:
+            raise ValueError("Insufficient available funds in the source account")
+
+        # Adjust balances
+        src_account.balance.current = round(src_account.balance.current - amount, 2)
+        src_account.balance.available = round(src_account.balance.available - amount, 2)
+        dst_account.balance.current = round(dst_account.balance.current + amount, 2)
+        dst_account.balance.available = round(dst_account.balance.available + amount, 2)
+
+        now = self._now_ts()
+        debit_txn_id = self._generate_transaction_id()
+        credit_txn_id = f"TXN-{int(debit_txn_id.split('-')[1]) + 1:06d}"
+
+        debit_txn = Transaction(
+            transaction_id=debit_txn_id,
+            client_id=client.client_id,
+            account_id=src_account.account_id,
+            timestamp=now,
+            type="transfer",
+            direction="debit",
+            amount=round(amount, 2),
+            currency=src_account.currency,
+            description=description or "Internal transfer",
+            method="Internal",
+            status="posted",
+            merchant=None,
+            related_transaction_id=credit_txn_id,
+            exchange=None,
+            fees=[],
+            hold=None,
+            balance_after=src_account.balance.current,
+        )
+        credit_txn = Transaction(
+            transaction_id=credit_txn_id,
+            client_id=client.client_id,
+            account_id=dst_account.account_id,
+            timestamp=now,
+            type="transfer",
+            direction="credit",
+            amount=round(amount, 2),
+            currency=dst_account.currency,
+            description=description or "Internal transfer",
+            method="Internal",
+            status="posted",
+            merchant=None,
+            related_transaction_id=debit_txn_id,
+            exchange=None,
+            fees=[],
+            hold=None,
+            balance_after=dst_account.balance.current,
+        )
+
+        self.db.transactions[debit_txn.transaction_id] = debit_txn
+        self.db.transactions[credit_txn.transaction_id] = credit_txn
+
+        return [debit_txn, credit_txn]
+
+    @is_tool(ToolType.WRITE)
+    def transfer_to_beneficiary(
+        self,
+        client_id: str,
+        from_account_id: str,
+        beneficiary_id: str,
+        amount: float,
+        description: str,
+        method: TransactionMethod,
+    ) -> Transaction:
+        """Transfer funds from a client's account to a verified beneficiary.
+        The agent must explain the transfer and ask for explicit user confirmation (yes/no) to proceed.
+
+        Constraints:
+        - Beneficiary must be 'active' and 'verified'.
+        - The source account must be active and allowed for this beneficiary.
+        - Amount must be positive, not exceed per-transfer limit, and not exceed beneficiary's daily limit.
+
+        Args:
+            client_id: The client identifier, such as 'CLNT-0001'.
+            from_account_id: Source account ID.
+            beneficiary_id: Beneficiary ID.
+            amount: Transfer amount (must be positive).
+            description: Memo/description for the transfer.
+            method: Processing method ('ACH' or 'Wire' typically).
+
+        Returns:
+            Transaction: The posted transfer transaction.
+
+        Raises:
+            ValueError: If any validation fails.
+        """
+        if amount <= 0:
+            raise ValueError("Transfer amount must be positive")
+
+        client = self._get_client(client_id)
+        owner_id, src_account = self._find_account_owner(from_account_id)
+        if owner_id != client_id:
+            raise ValueError("Source account must belong to the specified client")
+        self._assert_account_active(src_account)
+
+        beneficiary = self._get_beneficiary(beneficiary_id)
+        if beneficiary.client_id != client_id:
+            raise ValueError("Beneficiary is not authorized by the specified client")
+        if beneficiary.status != "active":
+            raise ValueError("Beneficiary must be active")
+        if beneficiary.verification.status != "verified":
+            raise ValueError("Beneficiary must be verified")
+        if from_account_id not in beneficiary.allowed_from_account_ids:
+            raise ValueError("Transfers from this account are not allowed for the beneficiary")
+
+        # Limits
+        if amount > beneficiary.transfer_limits.per_transfer_limit:
+            raise ValueError("Amount exceeds beneficiary per-transfer limit")
+
+        # Compute today's total transferred to this beneficiary (based on description tagging)
+        today_str = self._today_str()
+        tag = f"beneficiary:{beneficiary_id}"
+        daily_total = 0.0
+        for t in self.db.transactions.values():
+            if (
+                t.client_id == client_id
+                and t.type == "transfer"
+                and t.direction == "debit"
+                and t.timestamp.startswith(today_str)
+                and t.description is not None
+                and tag in t.description
+            ):
+                daily_total += t.amount
+        if daily_total + amount > beneficiary.transfer_limits.daily_limit:
+            raise ValueError("Amount exceeds beneficiary daily transfer limit")
+
+        if src_account.balance.available < amount:
+            raise ValueError("Insufficient available funds in the source account")
+
+        # Deduct balance
+        src_account.balance.current = round(src_account.balance.current - amount, 2)
+        src_account.balance.available = round(src_account.balance.available - amount, 2)
+
+        txn_id = self._generate_transaction_id()
+        now = self._now_ts()
+        txn = Transaction(
+            transaction_id=txn_id,
+            client_id=client.client_id,
+            account_id=src_account.account_id,
+            timestamp=now,
+            type="transfer",
+            direction="debit",
+            amount=round(amount, 2),
+            currency=src_account.currency,
+            description=((description or "Transfer to beneficiary") + f" [{tag}]").strip(),
+            method=method,
+            status="posted",
+            merchant=None,
+            related_transaction_id=None,
+            exchange=None,
+            fees=[],
+            hold=None,
+            balance_after=src_account.balance.current,
+        )
+        self.db.transactions[txn.transaction_id] = txn
+        return txn
+
+    @is_tool(ToolType.WRITE)
+    def block_card(self, card_id: str, reason: str) -> Card:
+        """Block a card to prevent further transactions.
+        The agent must explain the change and ask for explicit user confirmation (yes/no) to proceed.
+
+        Args:
+            card_id: The card identifier, such as 'CARD-0001'.
+            reason: Reason for blocking (e.g., 'lost card', 'suspected fraud').
+
+        Returns:
+            Card: The card details after blocking.
+
+        Raises:
+            ValueError: If the card is not found or already blocked/expired.
+        """
+        _, card = self._find_card_owner(card_id)
+        if card.status == "blocked":
+            raise ValueError("Card is already blocked")
+        if card.status == "expired":
+            raise ValueError("Expired card cannot be blocked")
+        card.status = "blocked"
+        # Reason can be stored externally; Card has no explicit reason field.
+        return card
+
+    @is_tool(ToolType.WRITE)
+    def unblock_card(self, card_id: str) -> Card:
+        """Unblock a previously blocked card.
+        The agent must explain the change and ask for explicit user confirmation (yes/no) to proceed.
+
+        Args:
+            card_id: The card identifier, such as 'CARD-0001'.
+
+        Returns:
+            Card: The card details after unblocking.
+
+        Raises:
+            ValueError: If the card is not blocked or is expired.
+        """
+        _, card = self._find_card_owner(card_id)
+        if card.status != "blocked":
+            raise ValueError("Only blocked cards can be unblocked")
+        card.status = "active"
+        return card
+
+    @is_tool(ToolType.WRITE)
+    def set_card_pin(self, card_id: str) -> Card:
+        """Mark a card as having its PIN set.
+        The agent must explain the change and ask for explicit user confirmation (yes/no) to proceed.
+
+        Args:
+            card_id: The card identifier, such as 'CARD-0001'.
+
+        Returns:
+            Card: The card details after setting the PIN.
+
+        Raises:
+            ValueError: If the card is expired or blocked.
+        """
+        _, card = self._find_card_owner(card_id)
+        if card.status != "active":
+            raise ValueError("PIN can only be set for active cards")
+        card.pin_set = True
+        return card
+
+    @is_tool(ToolType.WRITE)
+    def update_client_address(
+        self,
+        client_id: str,
+        address1: str,
+        address2: str,
+        city: str,
+        state: str,
+        zip: str,
+        country: str,
+    ) -> Client:
+        """Update the primary address of a client.
+        The agent must explain the update and ask for explicit user confirmation (yes/no) to proceed.
+
+        Args:
+            client_id: The client identifier, such as 'CLNT-0001'.
+            address1: Primary address line.
+            address2: Secondary address line.
+            city: City name.
+            state: State or province.
+            zip: Postal code.
+            country: Country name.
+
+        Returns:
+            Client: The client details after the update.
+
+        Raises:
+            ValueError: If the client is not found.
+        """
+        client = self._get_client(client_id)
+        client.address = BankAddress(
+            address1=address1,
+            address2=address2,
+            city=city,
+            state=state,
+            zip=zip,
+            country=country,
+        )
+        return client
+
+    @is_tool(ToolType.WRITE)
+    def freeze_account(self, account_id: str, reason: str) -> Account:
+        """Freeze an account to temporarily restrict activity.
+        The agent must explain the freeze and ask for explicit user confirmation (yes/no) to proceed.
+
+        Args:
+            account_id: The account identifier, such as 'ACCT-0001'.
+            reason: Reason for freezing (e.g., 'security review').
+
+        Returns:
+            Account: The account details after freezing.
+
+        Raises:
+            ValueError: If the account is not found or already frozen/closed.
+        """
+        _, account = self._find_account_owner(account_id)
+        if account.status == "frozen":
+            raise ValueError("Account is already frozen")
+        if account.status == "closed":
+            raise ValueError("Closed account cannot be frozen")
+        account.status = "frozen"
+        return account
+
+    @is_tool(ToolType.WRITE)
+    def unfreeze_account(self, account_id: str) -> Account:
+        """Unfreeze a previously frozen account.
+        The agent must explain the change and ask for explicit user confirmation (yes/no) to proceed.
+
+        Args:
+            account_id: The account identifier, such as 'ACCT-0001'.
+
+        Returns:
+            Account: The account details after unfreezing.
+
+        Raises:
+            ValueError: If the account is not frozen.
+        """
+        _, account = self._find_account_owner(account_id)
+        if account.status != "frozen":
+            raise ValueError("Only frozen accounts can be unfrozen")
+        account.status = "active"
+        return account
+
+    @is_tool(ToolType.WRITE)
+    def close_account(self, account_id: str, reason: str) -> Account:
+        """Close an account. The account must have zero current balance and not be already closed.
+        The agent must explain the closure and ask for explicit user confirmation (yes/no) to proceed.
+
+        Args:
+            account_id: The account identifier, such as 'ACCT-0001'.
+            reason: Reason for closure (e.g., 'no longer needed').
+
+        Returns:
+            Account: The account details after closure.
+
+        Raises:
+            ValueError: If the account balance is non-zero or the account is already closed.
+        """
+        _, account = self._find_account_owner(account_id)
+        if account.status == "closed":
+            raise ValueError("Account is already closed")
+        if round(account.balance.current, 2) != 0.0:
+            raise ValueError("Account balance must be zero to close the account")
+        account.status = "closed"
+        return account
+
+    @is_tool(ToolType.WRITE)
+    def modify_beneficiary_notes(self, beneficiary_id: str, notes: str) -> Beneficiary:
+        """Modify or add notes on a beneficiary.
+        The agent must explain the update and ask for explicit user confirmation (yes/no) to proceed.
+
+        Args:
+            beneficiary_id: The beneficiary identifier, such as 'BEN-0001'.
+            notes: Notes to set (replaces any existing notes).
+
+        Returns:
+            Beneficiary: The beneficiary details after the modification.
+
+        Raises:
+            ValueError: If the beneficiary is not found.
+        """
+        beneficiary = self._get_beneficiary(beneficiary_id)
+        beneficiary.notes = notes
+        return beneficiary
+
+    @is_tool(ToolType.WRITE)
+    def pay_next_due_loan_payment(
+        self,
+        loan_id: str,
+        account_id: str,
+        method: TransactionMethod,
+        description: Optional[str] = None,
+    ) -> Loan:
+        """Pay the next 'due' scheduled payment for a loan from a specified account.
+        The agent must explain the payment and ask for explicit user confirmation (yes/no) to proceed.
+
+        Constraints:
+        - Loan must be active and have at least one 'due' schedule entry.
+        - The repayment account must match the loan's linked_repayment_account_id.
+        - The account must be active and have sufficient available balance.
+
+        Args:
+            loan_id: The loan identifier, such as 'LOAN-0001'.
+            account_id: The repayment account ID (must match the loan's linked account).
+            method: Transaction method used for repayment (e.g., 'ACH').
+            description: Optional memo for the payment.
+
+        Returns:
+            Loan: The loan details after posting the payment.
+
+        Raises:
+            ValueError: If any validation fails.
+        """
+        loan = self._get_loan(loan_id)
+        if loan.status != "active":
+            raise ValueError("Only active loans can accept payments")
+        if loan.linked_repayment_account_id != account_id:
+            raise ValueError("Account does not match the loan's linked repayment account")
+
+        owner_id, account = self._find_account_owner(account_id)
+        self._assert_account_active(account)
+
+        # Find the next due payment
+        next_due: Optional[LoanPaymentScheduleEntry] = None
+        for entry in loan.payment_schedule:
+            if entry.status == "due":
+                next_due = entry
+                break
+        if next_due is None:
+            raise ValueError("No due scheduled payment found for this loan")
+
+        amount = round(next_due.amount, 2)
+        if account.balance.available < amount:
+            raise ValueError("Insufficient available funds to make the loan payment")
+
+        # Deduct account balance
+        account.balance.current = round(account.balance.current - amount, 2)
+        account.balance.available = round(account.balance.available - amount, 2)
+
+        # Create transaction
+        txn_id = self._generate_transaction_id()
+        now = self._now_ts()
+        txn = Transaction(
+            transaction_id=txn_id,
+            client_id=loan.client_id,
+            account_id=account.account_id,
+            timestamp=now,
+            type="payment",
+            direction="debit",
+            amount=amount,
+            currency=loan.currency,
+            description=(description or "Scheduled loan payment"),
+            method=method,
+            status="posted",
+            merchant=None,
+            related_transaction_id=None,
+            exchange=None,
+            fees=[],
+            hold=None,
+            balance_after=account.balance.current,
+        )
+        self.db.transactions[txn.transaction_id] = txn
+
+        # Update schedule entry to paid and attach transaction_id
+        next_due.status = "paid"
+        next_due.transaction_id = txn.transaction_id
+
+        # Append simplified repayment history entry
+        loan.repayment_history.append(
+            {
+                "transaction_id": txn.transaction_id,
+                "posted_at": now,
+                "amount": amount,
+                "currency": loan.currency,
+                "method": method,
+                "principal_component": amount,
+                "interest_component": 0.0,
+                "fees_component": 0.0,
+            }  # LoanRepaymentHistoryEntry will coerce via pydantic
+        )
+
+        return loan
+
+    @is_tool(ToolType.WRITE)
+    def reverse_transaction(self, transaction_id: str, reason: str) -> Transaction:
+        """Reverse a posted transaction and create a compensating entry.
+        The agent must explain the reversal and ask for explicit user confirmation (yes/no) to proceed.
+
+        Constraints:
+        - Only 'posted' transactions can be reversed.
+        - The account balance will be adjusted accordingly.
+
+        Args:
+            transaction_id: The transaction identifier to reverse.
+            reason: Reason for reversal (e.g., 'duplicate', 'error').
+
+        Returns:
+            Transaction: The reversal transaction (new entry).
+
+        Raises:
+            ValueError: If the transaction is not found or cannot be reversed.
+        """
+        original = self._get_transaction(transaction_id)
+        if original.status != "posted":
+            raise ValueError("Only posted transactions can be reversed")
+
+        # Adjust account balance opposite to original direction
+        owner_id, account = self._find_account_owner(original.account_id)
+        if original.direction == "debit":
+            account.balance.current = round(account.balance.current + original.amount, 2)
+            account.balance.available = round(account.balance.available + original.amount, 2)
+        else:
+            account.balance.current = round(account.balance.current - original.amount, 2)
+            account.balance.available = round(account.balance.available - original.amount, 2)
+
+        # Mark original as reversed
+        original.status = "reversed"
+
+        # Create compensating transaction
+        reversal_id = self._generate_transaction_id()
+        now = self._now_ts()
+        reversal = Transaction(
+            transaction_id=reversal_id,
+            client_id=original.client_id,
+            account_id=original.account_id,
+            timestamp=now,
+            type=original.type,
+            direction=("credit" if original.direction == "debit" else "debit"),
+            amount=round(original.amount, 2),
+            currency=original.currency,
+            description=f"Reversal of {original.transaction_id}: {reason}",
+            method=original.method,
+            status="posted",
+            merchant=original.merchant,
+            related_transaction_id=original.transaction_id,
+            exchange=original.exchange,
+            fees=[],
+            hold=None,
+            balance_after=account.balance.current,
+        )
+        self.db.transactions[reversal.transaction_id] = reversal
+        return reversal
+```
+
+Database content:
+{
+  "clients": {
+    "id001-CL-0001": {
+      "client_ref": "id001-CL-0001",
+      "identity": {
+        "given": "John",
+        "family": "Miller",
+        "date_of_birth": "1985-04-22",
+        "national_id": "USA-1985-04-22-1234"
+      },
+      "contact": {
+        "email": "john.miller@example.com",
+        "phone": "+1-415-555-0123",
+        "address": {
+          "line_one": "123 Oak St",
+          "line_two": "Apt 4B",
+          "municipality": "San Francisco",
+          "nation": "United States",
+          "province": "CA",
+          "postal_code": "94107"
+        }
+      },
+      "accounts": {
+        "id002-AC-0001": {
+          "account_ref": "id002-AC-0001",
+          "kind": "checking",
+          "currency": "USD",
+          "iban": "US00TST00000000000001",
+          "routing_no": "021000021",
+          "tail_digits": "1234",
+          "opened_on": "2021-01-15",
+          "status": "open"
+        }
+      },
+      "cards": {
+        "id003-CARD-0001": {
+          "card_ref": "id003-CARD-0001",
+          "issuer": "Acme Bank",
+          "network": "visa",
+          "tail_digits": "5678",
+          "expiry": "05/26"
+        }
+      },
+      "authorized_beneficiaries": [
+        "id006-BF-0001"
+      ],
+      "loan_refs": [
+        "id005-LN-0001"
+      ],
+      "transaction_log": [
+        "id004-TX-0001"
+      ]
+    },
+    "id001-CL-0002": {
+      "client_ref": "id001-CL-0002",
+      "identity": {
+        "given": "Alice",
+        "family": "Nguyen",
+        "date_of_birth": "1990-11-02",
+        "national_id": "USA-1990-11-02-5678"
+      },
+      "contact": {
+        "email": "alice.nguyen@example.com",
+        "phone": "+1-206-555-0199",
+        "address": {
+          "line_one": "500 Pine St",
+          "line_two": "Suite 120",
+          "municipality": "Seattle",
+          "nation": "United States",
+          "province": "WA",
+          "postal_code": "98101"
+        }
+      },
+      "accounts": {
+        "id002-AC-0002": {
+          "account_ref": "id002-AC-0002",
+          "kind": "savings",
+          "currency": "USD",
+          "iban": "US00TST00000000000002",
+          "routing_no": "125000105",
+          "tail_digits": "7890",
+          "opened_on": "2020-06-10",
+          "status": "open"
+        }
+      },
+      "cards": {
+        "id003-CARD-0002": {
+          "card_ref": "id003-CARD-0002",
+          "issuer": "Acme Bank",
+          "network": "mastercard",
+          "tail_digits": "1122",
+          "expiry": "11/27"
+        }
+      },
+      "authorized_beneficiaries": [
+        "id006-BF-0002"
+      ],
+      "loan_refs": [
+        "id005-LN-0002"
+      ],
+      "transaction_log": [
+        "id004-TX-0003"
+      ]
+    },
+    "id001-CL-0003": {
+      "client_ref": "id001-CL-0003",
+      "identity": {
+        "given": "Robert",
+        "family": "Johnson",
+        "date_of_birth": "1978-02-14",
+        "national_id": "USA-1978-02-14-9012"
+      },
+      "contact": {
+        "email": "robert.johnson@example.com",
+        "phone": "+1-312-555-0222",
+        "address": {
+          "line_one": "510 W Example Ave",
+          "line_two": "Unit 5",
+          "municipality": "Chicago",
+          "nation": "United States",
+          "province": "IL",
+          "postal_code": "60610"
+        }
+      },
+      "accounts": {
+        "id002-AC-0003": {
+          "account_ref": "id002-AC-0003",
+          "kind": "checking",
+          "currency": "USD",
+          "iban": "US00TST00000000000003",
+          "routing_no": "071000013",
+          "tail_digits": "3344",
+          "opened_on": "2019-03-08",
+          "status": "open"
+        }
+      },
+      "cards": {
+        "id003-CARD-0003": {
+          "card_ref": "id003-CARD-0003",
+          "issuer": "Acme Bank",
+          "network": "visa",
+          "tail_digits": "4455",
+          "expiry": "08/28"
+        }
+      },
+      "authorized_beneficiaries": [
+        "id006-BF-0003"
+      ],
+      "loan_refs": [
+        "id005-LN-0003"
+      ],
+      "transaction_log": [
+        "id004-TX-0002"
+      ]
+    }
+  },
+  "transactions": {
+    "id004-TX-0001": {
+      "txn_ref": "id004-TX-0001",
+      "client_ref": "id001-CL-0001",
+      "account_ref": "id002-AC-0001",
+      "kind": "deposit",
+      "direction": "credit",
+      "amount": 15000.0,
+      "currency": "USD",
+      "initiated_at": "2024-06-01T10:15:00Z",
+      "posted_at": "2024-06-01T12:00:00Z",
+      "channel": "branch",
+      "counterparty": {
+        "name": "Acme Bank Loan Disbursements",
+        "account_no": "000123456789",
+        "bank_code": "ACMBUS33",
+        "swift_bic": "ACMBUS33XXX"
+      },
+      "related_loan_ref": "id005-LN-0001",
+      "status": "posted",
+      "line_items": [
+        {
+          "label": "Loan Disbursement",
+          "category": "loan_funding",
+          "amount": 15000.0,
+          "currency": "USD",
+          "note": "Personal loan disbursement to client account"
+        }
+      ],
+      "fees": [
+        {
+          "kind": "processing_fee",
+          "amount": 25.0,
+          "currency": "USD"
+        }
+      ],
+      "approvals": [
+        {
+          "method": "biometric",
+          "approved_by": "teller_402",
+          "timestamp": "2024-06-01T10:16:00Z"
+        }
+      ]
+    },
+    "id004-TX-0002": {
+      "txn_ref": "id004-TX-0002",
+      "client_ref": "id001-CL-0003",
+      "account_ref": "id002-AC-0003",
+      "kind": "transfer",
+      "direction": "credit",
+      "amount": 250000.0,
+      "currency": "USD",
+      "initiated_at": "2023-09-15T09:00:00Z",
+      "posted_at": "2023-09-15T09:30:00Z",
+      "channel": "web",
+      "counterparty": {
+        "name": "US Mortgage Funding LLC",
+        "account_no": "9988776655",
+        "bank_code": "USMFUS6S",
+        "swift_bic": "USMFUS6SXXX"
+      },
+      "related_loan_ref": "id005-LN-0003",
+      "status": "posted",
+      "line_items": [
+        {
+          "label": "Mortgage Disbursement",
+          "category": "loan_funding",
+          "amount": 250000.0,
+          "currency": "USD",
+          "note": "Mortgage loan proceeds"
+        }
+      ],
+      "fees": [
+        {
+          "kind": "transfer_fee",
+          "amount": 5.0,
+          "currency": "USD"
+        }
+      ],
+      "approvals": [
+        {
+          "method": "otp",
+          "approved_by": "rob_johnson",
+          "timestamp": "2023-09-15T09:05:00Z"
+        }
+      ]
+    },
+    "id004-TX-0003": {
+      "txn_ref": "id004-TX-0003",
+      "client_ref": "id001-CL-0002",
+      "account_ref": "id002-AC-0002",
+      "kind": "card_payment",
+      "direction": "debit",
+      "amount": 82.45,
+      "currency": "USD",
+      "initiated_at": "2024-07-08T18:22:00Z",
+      "posted_at": "2024-07-08T18:30:00Z",
+      "channel": "mobile",
+      "counterparty": {
+        "name": "Fresh Market #112",
+        "account_no": "merchant112",
+        "bank_code": "FMKTUS11",
+        "swift_bic": "FMKTUS11XXX"
+      },
+      "related_loan_ref": null,
+      "status": "posted",
+      "line_items": [
+        {
+          "label": "Groceries",
+          "category": "groceries",
+          "amount": 78.45,
+          "currency": "USD",
+          "note": "Weekly grocery run"
+        },
+        {
+          "label": "Card Convenience Fee",
+          "category": "fee",
+          "amount": 4.0,
+          "currency": "USD",
+          "note": "Merchant fee"
+        }
+      ],
+      "fees": [
+        {
+          "kind": "card_processing_fee",
+          "amount": 1.25,
+          "currency": "USD"
+        }
+      ],
+      "approvals": [
+        {
+          "method": "biometric",
+          "approved_by": "device_faceid_alice",
+          "timestamp": "2024-07-08T18:22:05Z"
+        }
+      ]
+    }
+  },
+  "loans": {
+    "id005-LN-0001": {
+      "loan_ref": "id005-LN-0001",
+      "client_ref": "id001-CL-0001",
+      "product": "personal",
+      "principal": 15000.0,
+      "currency": "USD",
+      "term_months": 36,
+      "rate": {
+        "type": "variable",
+        "apr": 12.5,
+        "index": "SOFR",
+        "margin": 3.0
+      },
+      "origination_date": "2024-06-01",
+      "maturity_date": "2027-06-01",
+      "state": "active",
+      "collateral": null,
+      "repayment_schedule": [
+        {
+          "installment_no": 1,
+          "due_date": "2024-07-01",
+          "amount_principal": 416.67,
+          "amount_interest": 156.25,
+          "total_due": 572.92,
+          "paid": false,
+          "payment_txn_ref": null
+        },
+        {
+          "installment_no": 2,
+          "due_date": "2024-08-01",
+          "amount_principal": 416.67,
+          "amount_interest": 150.0,
+          "total_due": 566.67,
+          "paid": false,
+          "payment_txn_ref": null
+        },
+        {
+          "installment_no": 3,
+          "due_date": "2024-09-01",
+          "amount_principal": 416.67,
+          "amount_interest": 145.0,
+          "total_due": 561.67,
+          "paid": false,
+          "payment_txn_ref": null
+        }
+      ],
+      "escrow_account_ref": null,
+      "documents": [
+        {
+          "doc_type": "promissory_note",
+          "uri": "https://docs.acmebank.com/loans/id005-LN-0001/promissory_note.pdf",
+          "hash": "b1f2f8b5e6b74a9c9f76c1d8c3e0c91b"
+        },
+        {
+          "doc_type": "truth_in_lending",
+          "uri": "https://docs.acmebank.com/loans/id005-LN-0001/truth_in_lending.pdf",
+          "hash": "7d3a9c2f4e1b6a88c0d9e1f4b6c7a3d2"
+        }
+      ],
+      "disbursement": {
+        "date": "2024-06-01",
+        "to_account_ref": "id002-AC-0001",
+        "txn_ref": "id004-TX-0001"
+      },
+      "charges": [
+        {
+          "kind": "origination_fee",
+          "amount": 75.0,
+          "currency": "USD",
+          "assessed_on": "2024-06-01",
+          "txn_ref": "id004-TX-0001"
+        }
+      ]
+    },
+    "id005-LN-0002": {
+      "loan_ref": "id005-LN-0002",
+      "client_ref": "id001-CL-0002",
+      "product": "auto",
+      "principal": 22000.0,
+      "currency": "USD",
+      "term_months": 60,
+      "rate": {
+        "type": "fixed",
+        "apr": 6.5,
+        "index": null,
+        "margin": null
+      },
+      "origination_date": "2022-03-10",
+      "maturity_date": "2027-03-10",
+      "state": "active",
+      "collateral": {
+        "asset_id": "VIN-1HGBH41JXMN12345",
+        "description": "2019 Honda Accord",
+        "estimated_value": 18000.0
+      },
+      "repayment_schedule": [
+        {
+          "installment_no": 28,
+          "due_date": "2024-07-10",
+          "amount_principal": 300.0,
+          "amount_interest": 85.0,
+          "total_due": 385.0,
+          "paid": false,
+          "payment_txn_ref": null
+        },
+        {
+          "installment_no": 29,
+          "due_date": "2024-08-10",
+          "amount_principal": 300.0,
+          "amount_interest": 82.0,
+          "total_due": 382.0,
+          "paid": false,
+          "payment_txn_ref": null
+        },
+        {
+          "installment_no": 30,
+          "due_date": "2024-09-10",
+          "amount_principal": 300.0,
+          "amount_interest": 80.0,
+          "total_due": 380.0,
+          "paid": false,
+          "payment_txn_ref": null
+        }
+      ],
+      "escrow_account_ref": null,
+      "documents": [
+        {
+          "doc_type": "security_agreement",
+          "uri": "https://docs.acmebank.com/loans/id005-LN-0002/security_agreement.pdf",
+          "hash": "c3d9b8a1e2f4a776a9c0d1e2f3b4c5d6"
+        },
+        {
+          "doc_type": "title",
+          "uri": "https://docs.acmebank.com/loans/id005-LN-0002/title.pdf",
+          "hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+        }
+      ],
+      "disbursement": null,
+      "charges": [
+        {
+          "kind": "origination_fee",
+          "amount": 250.0,
+          "currency": "USD",
+          "assessed_on": "2022-03-10",
+          "txn_ref": null
+        }
+      ]
+    },
+    "id005-LN-0003": {
+      "loan_ref": "id005-LN-0003",
+      "client_ref": "id001-CL-0003",
+      "product": "mortgage",
+      "principal": 250000.0,
+      "currency": "USD",
+      "term_months": 360,
+      "rate": {
+        "type": "fixed",
+        "apr": 4.25,
+        "index": null,
+        "margin": null
+      },
+      "origination_date": "2023-09-15",
+      "maturity_date": "2053-09-15",
+      "state": "active",
+      "collateral": {
+        "asset_id": "PROP-CH-60610-123",
+        "description": "Single-family residence at 510 W Example Ave, Chicago, IL",
+        "estimated_value": 310000.0
+      },
+      "repayment_schedule": [
+        {
+          "installment_no": 1,
+          "due_date": "2023-10-01",
+          "amount_principal": 400.0,
+          "amount_interest": 885.0,
+          "total_due": 1285.0,
+          "paid": false,
+          "payment_txn_ref": null
+        },
+        {
+          "installment_no": 2,
+          "due_date": "2023-11-01",
+          "amount_principal": 402.0,
+          "amount_interest": 883.0,
+          "total_due": 1285.0,
+          "paid": false,
+          "payment_txn_ref": null
+        },
+        {
+          "installment_no": 3,
+          "due_date": "2023-12-01",
+          "amount_principal": 405.0,
+          "amount_interest": 880.0,
+          "total_due": 1285.0,
+          "paid": false,
+          "payment_txn_ref": null
+        }
+      ],
+      "escrow_account_ref": null,
+      "documents": [
+        {
+          "doc_type": "mortgage_note",
+          "uri": "https://docs.acmebank.com/loans/id005-LN-0003/mortgage_note.pdf",
+          "hash": "de8f1c2b3a4e5f60718293a4b5c6d7e8"
+        },
+        {
+          "doc_type": "deed_of_trust",
+          "uri": "https://docs.acmebank.com/loans/id005-LN-0003/deed_of_trust.pdf",
+          "hash": "0f1e2d3c4b5a69788776655443322110"
+        }
+      ],
+      "disbursement": {
+        "date": "2023-09-15",
+        "to_account_ref": "id002-AC-0003",
+        "txn_ref": "id004-TX-0002"
+      },
+      "charges": [
+        {
+          "kind": "origination_fee",
+          "amount": 1200.0,
+          "currency": "USD",
+          "assessed_on": "2023-09-15",
+          "txn_ref": "id004-TX-0002"
+        }
+      ]
+    }
+  },
+  "beneficiaries": {
+    "id006-BF-0001": {
+      "beneficiary_ref": "id006-BF-0001",
+      "owner_client_ref": "id001-CL-0001",
+      "identity": {
+        "type": "person",
+        "given": "Jane",
+        "family": "Miller",
+        "organization": null
+      },
+      "account": {
+        "bank_name": "First National Bank",
+        "iban": "US00BNK00000000010001",
+        "swift_bic": "FNBSUS33XXX",
+        "routing_no": "121042882",
+        "account_no": "1000112345"
+      },
+      "address": {
+        "line_one": "200 Elm St",
+        "line_two": "Unit 3A",
+        "municipality": "Los Angeles",
+        "nation": "United States",
+        "province": "CA",
+        "postal_code": "90012"
+      },
+      "purpose": "family_support",
+      "recurring": {
+        "enabled": true,
+        "frequency": "monthly",
+        "next_date": "2024-07-15"
+      },
+      "limits": {
+        "per_transaction": 1500.0,
+        "daily": 2000.0,
+        "monthly": 5000.0,
+        "currency": "USD"
+      },
+      "verification": {
+        "status": "verified",
+        "verified_at": "2024-06-05T11:00:00Z",
+        "method": "micro_deposits"
+      },
+      "notes": "Sister support."
+    },
+    "id006-BF-0002": {
+      "beneficiary_ref": "id006-BF-0002",
+      "owner_client_ref": "id001-CL-0002",
+      "identity": {
+        "type": "business",
+        "given": null,
+        "family": null,
+        "organization": "BrightWork Consulting LLC"
+      },
+      "account": {
+        "bank_name": "Bank of America",
+        "iban": "US00BOFA00000000020002",
+        "swift_bic": "BOFAUS3NXXX",
+        "routing_no": "026009593",
+        "account_no": "2000223456"
+      },
+      "address": {
+        "line_one": "800 3rd Ave",
+        "line_two": "Floor 9",
+        "municipality": "Seattle",
+        "nation": "United States",
+        "province": "WA",
+        "postal_code": "98101"
+      },
+      "purpose": "vendor",
+      "recurring": {
+        "enabled": true,
+        "frequency": "weekly",
+        "next_date": "2024-07-12"
+      },
+      "limits": {
+        "per_transaction": 5000.0,
+        "daily": 10000.0,
+        "monthly": 50000.0,
+        "currency": "USD"
+      },
+      "verification": {
+        "status": "verified",
+        "verified_at": "2024-06-12T09:30:00Z",
+        "method": "document"
+      },
+      "notes": "Monthly retainer."
+    },
+    "id006-BF-0003": {
+      "beneficiary_ref": "id006-BF-0003",
+      "owner_client_ref": "id001-CL-0003",
+      "identity": {
+        "type": "person",
+        "given": "Emma",
+        "family": "Johnson",
+        "organization": null
+      },
+      "account": {
+        "bank_name": "Chase Bank",
+        "iban": "US00CHAS00000000030003",
+        "swift_bic": "CHASUS33XXX",
+        "routing_no": "021000021",
+        "account_no": "3000334567"
+      },
+      "address": {
+        "line_one": "1200 N Clark St",
+        "line_two": "Apt 22",
+        "municipality": "Chicago",
+        "nation": "United States",
+        "province": "IL",
+        "postal_code": "60610"
+      },
+      "purpose": "rent",
+      "recurring": {
+        "enabled": true,
+        "frequency": "monthly",
+        "next_date": "2024-07-01"
+      },
+      "limits": {
+        "per_transaction": 3000.0,
+        "daily": 3000.0,
+        "monthly": 9000.0,
+        "currency": "USD"
+      },
+      "verification": {
+        "status": "pending",
+        "verified_at": null,
+        "method": "open_banking"
+      },
+      "notes": "Landlord for apartment."
+    }
+  }
+}
+
+Task:
+{
+  "user_scenario": {
+    "task_instructions": "Verify the caller\u2019s identity, locate the existing client profile, confirm existing accounts and spouse relationship, gather the details needed for a joint checking application, and hand off to a human specialist to complete the joint account opening.",
+    "reason_for_call": "John Miller wants to open a new joint checking account with his spouse, Jane Miller, to manage shared household expenses. He\u2019d like two debit cards issued (one for each of them), a $500 daily ATM limit, and to fund the opening deposit with $2,000 from his existing checking. He is okay being connected to a specialist to complete the paperwork.",
+    "known_info": "Caller: John Miller (john.miller@example.com, +1-415-555-0123), existing checking account tail digits 1234 (account_ref id002-AC-0001), existing card tail digits 5678 (card_ref id003-CARD-0001), spouse Jane Miller (already listed as a verified beneficiary id006-BF-0001), mailing address on file: 123 Oak St, Apt 4B, San Francisco, CA 94107.",
+    "unknown_info": "Jane\u2019s contact details (email, phone), full legal identity info (SSN/national ID, DOB), her KYC documents, consent to pull credit/ID verification, whether overdraft protection is desired, statement preference (paperless vs paper), joint account disclosures acceptance, and whether the $2,000 opening deposit should be scheduled immediately upon account creation."
+  },
+  "actions": [
+    {
+      "function_name": "find_client_id_by_email",
+      "arguments": {
+        "email": "john.miller@example.com"
+      }
+    },
+    {
+      "function_name": "list_client_accounts",
+      "arguments": {
+        "client_id": "id001-CL-0001"
+      }
+    },
+    {
+      "function_name": "list_client_beneficiaries",
+      "arguments": {
+        "client_id": "id001-CL-0001"
+      }
+    },
+    {
+      "function_name": "transfer_to_human_agents",
+      "arguments": {
+        "summary": "Client John Miller (id001-CL-0001) requests to open a NEW JOINT CHECKING account with spouse Jane Miller. John has an existing checking (id002-AC-0001, tail 1234) and wants two debit cards, a $500 daily ATM limit, and to fund with $2,000 from his current checking once the joint account is created. Jane is listed as a verified beneficiary (id006-BF-0001), but is not yet a co-applicant/client. Please collect Jane\u2019s identity/KYC (DOB, SSN/National ID, contact info), obtain consents, review joint account disclosures, and complete account opening. Confirm overdraft preference and statement delivery. Upon successful opening, schedule an internal transfer of $2,000 from id002-AC-0001 as the opening deposit."
+      }
+    }
+  ],
+  "nl_assertions": "The joint checking account opening request has been escalated to a human specialist for completion.",
+  "communicate_info": "co-applicant"
+}
+
+Please make the task more complicated and difficult, e.g., adding more contraints, using more tools, requiring more steps, etc.
+Use the same task format and wrap it between <start> and <end>.

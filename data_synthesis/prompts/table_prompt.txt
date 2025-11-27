@@ -1,0 +1,6 @@
+A database can have many tables and a table can have many columns.
+List names of 100 tables that bank will build for their database.
+Use the following format to output:
+```
+["table_name1", "table_name2", ...]
+```

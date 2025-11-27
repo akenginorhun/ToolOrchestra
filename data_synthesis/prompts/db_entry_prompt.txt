@@ -1,0 +1,613 @@
+Data model
+```
+from typing import Any, Dict, List, Literal, Optional, Union
+
+from pydantic import BaseModel, Field
+
+from tau2.domains.retail.utils import RETAIL_DB_PATH
+from tau2.environment.db import DB
+
+
+# Enumerations
+AccountKind = Literal["checking", "savings"]
+AccountStatus = Literal["open", "frozen", "closed"]
+CardNetwork = Literal["visa", "mastercard"]
+
+TxnKind = Literal["deposit", "withdrawal", "transfer", "bill_pay", "card_payment"]
+TxnDirection = Literal["debit", "credit"]
+TxnChannel = Literal["branch", "mobile", "web", "atm"]
+TxnStatus = Literal["pending", "posted", "reversed", "failed"]
+ApprovalMethod = Literal["otp", "biometric"]
+
+LoanProduct = Literal["personal", "auto", "mortgage", "credit_line"]
+RateType = Literal["fixed", "variable"]
+LoanState = Literal["active", "delinquent", "paid_off", "charged_off"]
+LoanChargeKind = Literal["origination_fee", "late_fee", "prepayment_penalty"]
+
+BeneficiaryType = Literal["person", "business"]
+RecurringFrequency = Literal["weekly", "monthly"]
+VerificationStatus = Literal["pending", "verified", "failed"]
+VerificationMethod = Literal["micro_deposits", "document", "open_banking"]
+
+
+class Address(BaseModel):
+    """Represents a postal address"""
+
+    line_one: str = Field(description="Primary address line")
+    line_two: str = Field(description="Secondary address line")
+    municipality: str = Field(description="City or municipality")
+    nation: str = Field(description="Country name")
+    province: str = Field(description="State or province")
+    postal_code: str = Field(description="Postal or ZIP code")
+
+
+class ClientIdentity(BaseModel):
+    """Represents a client's personal identity"""
+
+    given: str = Field(description="Given (first) name")
+    family: str = Field(description="Family (last) name")
+    date_of_birth: str = Field(description="Date of birth (ISO 8601)")
+    national_id: str = Field(description="National identification number")
+
+
+class ClientContact(BaseModel):
+    """Represents client contact information"""
+
+    email: str = Field(description="Email address")
+    phone: str = Field(description="Phone number")
+    address: Address = Field(description="Mailing address")
+
+
+class Account(BaseModel):
+    """Represents a bank account held by a client"""
+
+    account_ref: str = Field(description="Unique identifier for the account")
+    kind: AccountKind = Field(description="Kind of account (checking, savings)")
+    currency: str = Field(description="Account currency (ISO 4217)")
+    iban: str = Field(description="International Bank Account Number (IBAN)")
+    routing_no: str = Field(description="Routing number")
+    tail_digits: str = Field(description="Last digits of the account number")
+    opened_on: str = Field(description="Account opening date (ISO 8601)")
+    status: AccountStatus = Field(description="Status of the account")
+
+
+class Card(BaseModel):
+    """Represents a payment card associated with a client"""
+
+    card_ref: str = Field(description="Unique identifier for the card")
+    issuer: str = Field(description="Issuer or provider of the card")
+    network: CardNetwork = Field(description="Card network (visa, mastercard)")
+    tail_digits: str = Field(description="Last digits of the card number")
+    expiry: str = Field(description="Card expiry (MM/YY or ISO 8601 date)")
+
+
+class Client(BaseModel):
+    """Represents a bank client with accounts, cards, and activity logs"""
+
+    client_ref: str = Field(description="Unique identifier for the client")
+    identity: ClientIdentity = Field(description="Client's identity details")
+    contact: ClientContact = Field(description="Client's contact information")
+    accounts: Dict[str, Account] = Field(
+        description="Dictionary of accounts indexed by account_ref"
+    )
+    cards: Dict[str, Card] = Field(
+        description="Dictionary of cards indexed by card_ref"
+    )
+    authorized_beneficiaries: List[str] = Field(
+        description="List of beneficiary references authorized by the client"
+    )
+    loan_refs: List[str] = Field(
+        description="List of loan references associated with this client"
+    )
+    transaction_log: List[str] = Field(
+        description="List of transaction references associated with this client"
+    )
+
+
+class Counterparty(BaseModel):
+    """Represents a counterparty in a transaction"""
+
+    name: str = Field(description="Counterparty name")
+    account_no: str = Field(description="Counterparty account number")
+    bank_code: str = Field(description="Counterparty bank code")
+    swift_bic: str = Field(description="Counterparty SWIFT/BIC code")
+
+
+class TransactionLineItem(BaseModel):
+    """Represents a categorized line item within a transaction"""
+
+    label: str = Field(description="Display label for the line item")
+    category: str = Field(description="Category (e.g., groceries, utilities, fee)")
+    amount: float = Field(description="Amount for the line item")
+    currency: str = Field(description="Currency for the line item (ISO 4217)")
+    note: Optional[str] = Field(
+        description="Optional note or memo for the line item", default=None
+    )
+
+
+class TransactionFee(BaseModel):
+    """Represents a fee associated with a transaction"""
+
+    kind: str = Field(description="Type of fee")
+    amount: float = Field(description="Fee amount")
+    currency: str = Field(description="Currency of the fee (ISO 4217)")
+
+
+class TransactionApproval(BaseModel):
+    """Represents an approval event for a transaction"""
+
+    method: ApprovalMethod = Field(description="Approval method (otp, biometric)")
+    approved_by: str = Field(description="Approver identifier")
+    timestamp: str = Field(description="Approval timestamp (ISO 8601)")
+
+
+class Transaction(BaseModel):
+    """Represents a bank transaction"""
+
+    txn_ref: str = Field(description="Unique identifier for the transaction")
+    client_ref: str = Field(description="Reference to the client")
+    account_ref: str = Field(description="Reference to the account")
+    kind: TxnKind = Field(
+        description="Type of transaction (deposit, withdrawal, transfer, bill_pay, card_payment)"
+    )
+    direction: TxnDirection = Field(description="Debit or credit")
+    amount: float = Field(description="Transaction amount")
+    currency: str = Field(description="Transaction currency (ISO 4217)")
+    initiated_at: str = Field(description="Initiation timestamp (ISO 8601)")
+    posted_at: Optional[str] = Field(
+        description="Posting timestamp (ISO 8601)", default=None
+    )
+    channel: TxnChannel = Field(description="Channel used (branch, mobile, web, atm)")
+    counterparty: Counterparty = Field(description="Counterparty details")
+    related_loan_ref: Optional[str] = Field(
+        description="Related loan reference, if applicable", default=None
+    )
+    status: TxnStatus = Field(
+        description="Current transaction status (pending, posted, reversed, failed)"
+    )
+    line_items: List[TransactionLineItem] = Field(
+        description="List of transaction line items"
+    )
+    fees: List[TransactionFee] = Field(description="List of fees applied")
+    approvals: List[TransactionApproval] = Field(
+        description="List of approval events for the transaction"
+    )
+
+
+class LoanRate(BaseModel):
+    """Represents loan rate details"""
+
+    type: RateType = Field(description="Rate type (fixed, variable)")
+    apr: float = Field(description="Annual Percentage Rate (APR)")
+    index: Optional[str] = Field(
+        description="Index reference for variable rates", default=None
+    )
+    margin: Optional[float] = Field(
+        description="Margin over index for variable rates", default=None
+    )
+
+
+class Collateral(BaseModel):
+    """Represents collateral securing a loan"""
+
+    asset_id: str = Field(description="Collateral asset identifier")
+    description: str = Field(description="Description of the collateral")
+    estimated_value: float = Field(description="Estimated value of the collateral")
+
+
+class RepaymentScheduleEntry(BaseModel):
+    """Represents a single installment in a loan repayment schedule"""
+
+    installment_no: int = Field(description="Installment sequence number")
+    due_date: str = Field(description="Due date for the installment (ISO 8601)")
+    amount_principal: float = Field(description="Principal amount due")
+    amount_interest: float = Field(description="Interest amount due")
+    total_due: float = Field(description="Total amount due for the installment")
+    paid: bool = Field(description="Whether the installment has been paid")
+    payment_txn_ref: Optional[str] = Field(
+        description="Reference to the payment transaction", default=None
+    )
+
+
+class LoanDocument(BaseModel):
+    """Represents a document associated with a loan"""
+
+    doc_type: str = Field(description="Type of document")
+    uri: str = Field(description="URI/location of the document")
+    hash: str = Field(description="Integrity hash of the document")
+
+
+class Disbursement(BaseModel):
+    """Represents loan disbursement details"""
+
+    date: str = Field(description="Disbursement date (ISO 8601)")
+    to_account_ref: str = Field(description="Account reference receiving funds")
+    txn_ref: str = Field(description="Transaction reference for disbursement")
+
+
+class LoanCharge(BaseModel):
+    """Represents a charge assessed on a loan"""
+
+    kind: LoanChargeKind = Field(
+        description="Type of loan charge (origination_fee, late_fee, prepayment_penalty)"
+    )
+    amount: float = Field(description="Charge amount")
+    currency: str = Field(description="Currency of the charge (ISO 4217)")
+    assessed_on: str = Field(description="Assessment date (ISO 8601)")
+    txn_ref: Optional[str] = Field(
+        description="Transaction reference associated with the charge", default=None
+    )
+
+
+class Loan(BaseModel):
+    """Represents a loan product held by a client"""
+
+    loan_ref: str = Field(description="Unique identifier for the loan")
+    client_ref: str = Field(description="Reference to the owning client")
+    product: LoanProduct = Field(
+        description="Loan product type (personal, auto, mortgage, credit_line)"
+    )
+    principal: float = Field(description="Original principal amount")
+    currency: str = Field(description="Loan currency (ISO 4217)")
+    term_months: int = Field(description="Term length in months")
+    rate: LoanRate = Field(description="Rate details for the loan")
+    origination_date: str = Field(description="Loan origination date (ISO 8601)")
+    maturity_date: str = Field(description="Loan maturity date (ISO 8601)")
+    state: LoanState = Field(
+        description="Current state of the loan (active, delinquent, paid_off, charged_off)"
+    )
+    collateral: Optional[Collateral] = Field(
+        description="Collateral securing the loan", default=None
+    )
+    repayment_schedule: List[RepaymentScheduleEntry] = Field(
+        description="Scheduled repayments for the loan"
+    )
+    escrow_account_ref: Optional[str] = Field(
+        description="Reference to associated escrow account", default=None
+    )
+    documents: List[LoanDocument] = Field(
+        description="Documents associated with the loan"
+    )
+    disbursement: Optional[Disbursement] = Field(
+        description="Disbursement details for the loan", default=None
+    )
+    charges: List[LoanCharge] = Field(
+        description="Charges assessed on the loan (e.g., origination, late fees)"
+    )
+
+
+class BeneficiaryIdentity(BaseModel):
+    """Represents a beneficiary's identity"""
+
+    type: BeneficiaryType = Field(description="Type of beneficiary (person, business)")
+    given: Optional[str] = Field(
+        description="Given (first) name if person", default=None
+    )
+    family: Optional[str] = Field(
+        description="Family (last) name if person", default=None
+    )
+    organization: Optional[str] = Field(
+        description="Organization name if business", default=None
+    )
+
+
+class BeneficiaryAccount(BaseModel):
+    """Represents bank account information for a beneficiary"""
+
+    bank_name: str = Field(description="Beneficiary bank name")
+    iban: str = Field(description="Beneficiary IBAN")
+    swift_bic: str = Field(description="Beneficiary SWIFT/BIC code")
+    routing_no: str = Field(description="Beneficiary routing number")
+    account_no: str = Field(description="Beneficiary account number")
+
+
+class RecurringConfig(BaseModel):
+    """Represents recurring payment configuration for a beneficiary"""
+
+    enabled: bool = Field(description="Whether recurring payments are enabled")
+    frequency: RecurringFrequency = Field(
+        description="Recurring payment frequency (weekly, monthly)"
+    )
+    next_date: Optional[str] = Field(
+        description="Next scheduled payment date (ISO 8601)", default=None
+    )
+
+
+class Limits(BaseModel):
+    """Represents transfer limits for a beneficiary"""
+
+    per_transaction: float = Field(description="Per-transaction limit")
+    daily: float = Field(description="Daily aggregate limit")
+    monthly: float = Field(description="Monthly aggregate limit")
+    currency: str = Field(description="Currency for limits (ISO 4217)")
+
+
+class Verification(BaseModel):
+    """Represents verification status for a beneficiary"""
+
+    status: VerificationStatus = Field(
+        description="Verification status (pending, verified, failed)"
+    )
+    verified_at: Optional[str] = Field(
+        description="Verification timestamp (ISO 8601)", default=None
+    )
+    method: Optional[VerificationMethod] = Field(
+        description="Verification method (micro_deposits, document, open_banking)",
+        default=None,
+    )
+
+
+class Beneficiary(BaseModel):
+    """Represents a beneficiary authorized by a client"""
+
+    beneficiary_ref: str = Field(description="Unique identifier for the beneficiary")
+    owner_client_ref: str = Field(description="Owning client reference")
+    identity: BeneficiaryIdentity = Field(description="Beneficiary identity details")
+    account: BeneficiaryAccount = Field(description="Beneficiary account details")
+    address: Address = Field(description="Beneficiary address")
+    purpose: str = Field(
+        description="Purpose of payments (e.g., payroll, rent, family_support, vendor)"
+    )
+    recurring: RecurringConfig = Field(
+        description="Recurring payment configuration for this beneficiary"
+    )
+    limits: Limits = Field(description="Transfer limits applicable to this beneficiary")
+    verification: Verification = Field(
+        description="Verification status and metadata for this beneficiary"
+    )
+    notes: Optional[str] = Field(description="Additional notes", default=None)
+
+
+class BankDB(DB):
+    """Database containing bank-related data including clients, transactions, loans and beneficiaries"""
+
+    clients: Dict[str, Client] = Field(
+        description="Dictionary of all clients indexed by client_ref"
+    )
+    transactions: Dict[str, Transaction] = Field(
+        description="Dictionary of all transactions indexed by txn_ref"
+    )
+    loans: Dict[str, Loan] = Field(
+        description="Dictionary of all loans indexed by loan_ref"
+    )
+    beneficiaries: Dict[str, Beneficiary] = Field(
+        description="Dictionary of all beneficiaries indexed by beneficiary_ref"
+    )
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get summary statistics of the bank database."""
+        num_clients = len(self.clients)
+        num_transactions = len(self.transactions)
+        num_loans = len(self.loans)
+        num_beneficiaries = len(self.beneficiaries)
+        total_accounts = sum(len(client.accounts) for client in self.clients.values())
+        total_cards = sum(len(client.cards) for client in self.clients.values())
+        return {
+            "num_clients": num_clients,
+            "num_transactions": num_transactions,
+            "num_loans": num_loans,
+            "num_beneficiaries": num_beneficiaries,
+            "total_accounts": total_accounts,
+            "total_cards": total_cards,
+        }
+```
+
+Schema
+```
+{
+  "clients": {
+    "CL000001": {  // client_ref
+      "client_ref": "CL000001",
+      "identity": {
+        "given": "...",
+        "family": "...",
+        "date_of_birth": "...",
+        "national_id": "..."
+      },
+      "contact": {
+        "email": "...",
+        "phone": "...",
+        "address": {
+          "line_one": "...",
+          "line_two": "...",
+          "municipality": "...",
+          "nation": "...",
+          "province": "...",
+          "postal_code": "..."
+        }
+      },
+      "accounts": {
+        "AC000001": {  // account_ref
+          "account_ref": "AC000001",
+          "kind": "...",  // checking, savings
+          "currency": "...",
+          "iban": "...",
+          "routing_no": "...",
+          "tail_digits": "...",
+          "opened_on": "...",
+          "status": "..."  // open, frozen, closed
+        }
+      },
+      "cards": {
+        "CARD0001": {  // card_ref
+          "card_ref": "CARD0001",
+          "issuer": "...",
+          "network": "...",  // visa, mastercard
+          "tail_digits": "...",
+          "expiry": "..."
+        }
+      },
+      "authorized_beneficiaries": [
+        "BF000001",
+        "..."
+      ],
+      "loan_refs": [
+        "LN000001",
+        "..."
+      ],
+      "transaction_log": [
+        "TX000001",
+        "..."
+      ]
+    }
+  },
+  "transactions": {
+    "TX000001": {  // txn_ref
+      "txn_ref": "TX000001",
+      "client_ref": "...",
+      "account_ref": "...",
+      "kind": "...",  // deposit, withdrawal, transfer, bill_pay, card_payment
+      "direction": "...",  // debit, credit
+      "amount": ...,
+      "currency": "...",
+      "initiated_at": "...",
+      "posted_at": "...",
+      "channel": "...",  // branch, mobile, web, atm
+      "counterparty": {
+        "name": "...",
+        "account_no": "...",
+        "bank_code": "...",
+        "swift_bic": "..."
+      },
+      "related_loan_ref": "...",  // optional
+      "status": "...",  // pending, posted, reversed, failed
+      "line_items": [
+        {
+          "label": "...",
+          "category": "...",  // groceries, utilities, fee
+          "amount": ...,
+          "currency": "...",
+          "note": "..."
+        }
+      ],
+      "fees": [
+        {
+          "kind": "...",
+          "amount": ...,
+          "currency": "..."
+        }
+      ],
+      "approvals": [
+        {
+          "method": "...",  // otp, biometric
+          "approved_by": "...",
+          "timestamp": "..."
+        }
+      ]
+    }
+  },
+  "loans": {
+    "LN000001": {  // loan_ref
+      "loan_ref": "LN000001",
+      "client_ref": "...",
+      "product": "...",  // personal, auto, mortgage, credit_line
+      "principal": ...,
+      "currency": "...",
+      "term_months": ...,
+      "rate": {
+        "type": "...",  // fixed, variable
+        "apr": ...,
+        "index": "...",
+        "margin": ...
+      },
+      "origination_date": "...",
+      "maturity_date": "...",
+      "state": "...",  // active, delinquent, paid_off, charged_off
+      "collateral": {
+        "asset_id": "...",
+        "description": "...",
+        "estimated_value": ...
+      },
+      "repayment_schedule": [
+        {
+          "installment_no": ...,
+          "due_date": "...",
+          "amount_principal": ...,
+          "amount_interest": ...,
+          "total_due": ...,
+          "paid": "...",  // true or false
+          "payment_txn_ref": "..."
+        }
+      ],
+      "escrow_account_ref": "...",
+      "documents": [
+        {
+          "doc_type": "...",
+          "uri": "...",
+          "hash": "..."
+        }
+      ],
+      "disbursement": {
+        "date": "...",
+        "to_account_ref": "...",
+        "txn_ref": "..."
+      },
+      "charges": [
+        {
+          "kind": "...",  // origination_fee, late_fee, prepayment_penalty
+          "amount": ...,
+          "currency": "...",
+          "assessed_on": "...",
+          "txn_ref": "..."
+        }
+      ]
+    }
+  },
+  "beneficiaries": {
+    "BF000001": {  // beneficiary_ref
+      "beneficiary_ref": "BF000001",
+      "owner_client_ref": "...",
+      "identity": {
+        "type": "...",  // person, business
+        "given": "...",
+        "family": "...",
+        "organization": "..."
+      },
+      "account": {
+        "bank_name": "...",
+        "iban": "...",
+        "swift_bic": "...",
+        "routing_no": "...",
+        "account_no": "..."
+      },
+      "address": {
+        "line_one": "...",
+        "line_two": "...",
+        "municipality": "...",
+        "nation": "...",
+        "province": "...",
+        "postal_code": "..."
+      },
+      "purpose": "...",  // payroll, rent, family_support, vendor
+      "recurring": {
+        "enabled": "...",  // true or false
+        "frequency": "...",  // weekly, monthly
+        "next_date": "..."
+      },
+      "limits": {
+        "per_transaction": ...,
+        "daily": ...,
+        "monthly": ...,
+        "currency": "..."
+      },
+      "verification": {
+        "status": "...",  // pending, verified, failed
+        "verified_at": "...",
+        "method": "..."  // micro_deposits, document, open_banking
+      },
+      "notes": "..."
+    }
+  }
+}
+```
+
+Following the data model and schema to write 3 records for each field. Make sure that the values align with the definitions in the data model and are consistent in different places. Select a different id from the following for different types: [id001, id002, id003, id004, id005, id006, id007, id008, id009, id010]. Use the country United States and its currency. Use the following format to output:
+```
+{
+    "clients": ...,
+    "transactions": ...,
+    "loans": ...,
+    "beneficiaries": ...
+}
+```
+Wrap the dictionary within ```.

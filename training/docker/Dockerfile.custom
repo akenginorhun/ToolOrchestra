@@ -1,0 +1,15 @@
+FROM base_vllm0.8.5
+WORKDIR /workspace
+RUN pip3 install pynvml immutabledict nltk langdetect absl-py
+RUN python3 -c "import nltk; nltk.download('punkt_tab')"
+RUN apt-get update && \
+    apt-get install -y gosu sudo && \
+    rm -rf /var/lib/apt/lists/* && \
+    gosu nobody true
+COPY entrypoint.sh /app/entrypoint.sh
+RUN sudo su -
+RUN chmod +x /app/entrypoint.sh
+RUN chmod 777 -R /root
+RUN pip install math-verify[antlr4_9_3] torchdata pudb
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/usr/bin/bash"]

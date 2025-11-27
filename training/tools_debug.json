@@ -1,0 +1,22 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "calculate",
+      "description": "calculator to calculate addition, substraction, multiplication or division",
+      "parameters": {
+        "properties": {
+          "expression": {
+            "description": "The expression to calculate.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expression"
+        ],
+        "title": "parameters",
+        "type": "object"
+      }
+    }
+  }
+]
