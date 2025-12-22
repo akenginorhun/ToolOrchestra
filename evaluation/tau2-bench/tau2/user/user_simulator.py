@@ -22,13 +22,14 @@ from tau2.user.base import (
 )
 from tau2.utils import DATA_DIR
 from tau2.utils.llm_utils import generate
-
+import os
 GLOBAL_USER_SIM_GUIDELINES_DIR = DATA_DIR / "tau2" / "user_simulator"
 
+REPO_PATH = os.environ.get('REPO_PATH')
 
-GLOBAL_USER_SIM_GUIDELINES_PATH = 'evaluation/simulation_guidelines.md'
+GLOBAL_USER_SIM_GUIDELINES_PATH = os.path.join(REPO_PATH, 'data/tau2/user_simulator/simulation_guidelines.md') # '../evaluation/data_dir/tau2/user_simulator/simulation_guidelines.md'
 
-GLOBAL_USER_SIM_GUIDELINES_PATH_TOOLS = "evaluation/simulation_guidelines_tools.md"
+GLOBAL_USER_SIM_GUIDELINES_PATH_TOOLS = os.path.join(REPO_PATH, 'data/tau2/user_simulator/simulation_guidelines_tools.md') # "../evaluation/data_dir/tau2/user_simulator/simulation_guidelines_tools.md"
 
 
 def get_global_user_sim_guidelines(use_tools: bool = False) -> str:

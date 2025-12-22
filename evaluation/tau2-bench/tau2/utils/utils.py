@@ -3,7 +3,7 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-
+import os
 from deepdiff import DeepDiff
 from dotenv import load_dotenv
 from loguru import logger
@@ -12,8 +12,9 @@ res = load_dotenv()
 # if not res:
 #     logger.warning("No .env file found")
 
-DATA_DIR = Path('data_dir')
-
+# DATA_DIR = Path('data_dir')
+data_dir = os.path.join(os.environ.get('REPO_PATH'), 'evaluation/data_dir')
+DATA_DIR = Path(data_dir)
 
 def get_dict_hash(obj: dict) -> str:
     """

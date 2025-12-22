@@ -12,6 +12,7 @@ from tau2.domains.retail.utils import (
     RETAIL_TASK_SET_PATH,
 )
 from tau2.environment.environment import Environment
+import os
 
 
 def get_environment(
@@ -21,9 +22,9 @@ def get_environment(
     if solo_mode:
         raise ValueError("Retail domain does not support solo mode")
     if db is None:
-        db = RetailDB.load('../data_dir/tau2/domains/retail/db.json')
+        db = RetailDB.load(os.path.join(os.environ.get('REPO_PATH'), 'data/tau2/domains/retail/db.json'))
     tools = RetailTools(db)
-    with open('../data_dir/tau2/domains/retail/policy.md', "r") as fp:
+    with open(os.path.join(os.environ.get('REPO_PATH'), 'data/tau2/domains/retail/policy.md'), "r") as fp:
         policy = fp.read()
     return Environment(
         domain_name="retail",
