@@ -82,8 +82,23 @@ def get_tasks(task_path,save_to) -> list[Task]:
     print("Total tasks:",len(tasks))
     print("Tasks to run:",len(updated_tasks))
     tasks = updated_tasks
-    # print(37,tasks[0])
-    return_tasks = [Task.model_validate(task) for task in tasks]
-    # print(39,return_tasks[0])
+    
+    # Debug tasks validation
+    print(f"Starting to validate {len(tasks)} tasks...")
+    return_tasks = []
+    for i, task in enumerate(tasks):
+        task_id = task.get('id', f'unknown_{i}')
+        print(f"[{i+1}/{len(tasks)}] Validating: {task_id}")
+        try:
+            validated = Task.model_validate(task)
+            return_tasks.append(validated)
+        except Exception as e:
+            print(f"ERROR at task {task_id}: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    if return_tasks:
+        print('return_tasks[0]:', return_tasks[0])
     # exit(0)
     return return_tasks

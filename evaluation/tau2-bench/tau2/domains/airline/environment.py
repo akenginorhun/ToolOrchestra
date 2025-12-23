@@ -21,9 +21,9 @@ def get_environment(
     if solo_mode:
         raise ValueError("Airline domain does not support solo mode")
     if db is None:
-        db = FlightDB.load('../data_dir/tau2/domains/airline/db.json')
+        db = FlightDB.load(os.path.join(os.environ.get('REPO_PATH'), 'data/tau2/domains/airline/db.json'))
     tools = AirlineTools(db)
-    with open('../data_dir/tau2/domains/airline/policy.md', "r") as fp:
+    with open(os.path.join(os.environ.get('REPO_PATH'), 'data/tau2/domains/airline/policy.md'), "r") as fp:
         policy = fp.read()
     return Environment(
         domain_name="airline",

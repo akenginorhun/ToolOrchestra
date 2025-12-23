@@ -7,6 +7,19 @@ from typing import Any, Optional
 import os
 from loguru import logger
 
+def _log_with_time(msg: str, level: str = "INFO"):
+    """Helper function to log with timestamp."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    log_msg = f"[{timestamp}] {msg}"
+    if level == "DEBUG":
+        logger.debug(log_msg)
+    elif level == "WARNING":
+        logger.warning(log_msg)
+    elif level == "ERROR":
+        logger.error(log_msg)
+    else:
+        logger.info(log_msg)
+
 from tau2.agent.base import BaseAgent, is_valid_agent_history_message
 from tau2.agent.llm_agent import LLMSoloAgent
 from tau2.data_model.message import (
@@ -87,6 +100,8 @@ class Orchestrator:
         - Initialize the agent and user states.
         - Send the first message (default message from the agent to the user).
         """
+        _log_with_time(f"[Orchestrator] Starting initialization for task: {self.task.id}")
+        init_start = time.perf_counter()
         initial_state = self.task.initial_state
         # 85 initial_state None
         initialization_data = (
@@ -120,11 +135,14 @@ class Orchestrator:
         # 114 initialization_data None
         # 115 initialization_actions None
         # 116 message_history []
+        _log_with_time(f"[Orchestrator] Initializing environment...")
+        env_init_start = time.perf_counter()
         self._initialize_environment(
             initialization_data=initialization_data,
             initialization_actions=initialization_actions,
             message_history=message_history,
         )
+        _log_with_time(f"[Orchestrator] Environment initialized in {time.perf_counter() - env_init_start:.3f}s")
 
         # Set seeds for the agent, user
         if self.seed is not None:
@@ -254,6 +272,7 @@ class Orchestrator:
                     self.termination_reason = TerminationReason.AGENT_STOP
 
         self.environment.sync_tools()
+        _log_with_time(f"[Orchestrator] Initialization completed in {time.perf_counter() - init_start:.3f}s, solo_mode={self.solo_mode}")
 
     def run(self) -> SimulationRun:
         """
@@ -262,9 +281,11 @@ class Orchestrator:
         Returns:
             SimulationRun: The simulation run.
         """
+        _log_with_time(f"[Orchestrator] ========== Starting simulation run for task: {self.task.id} ==========")
         start_time = get_now()
         start = time.perf_counter()
         self.initialize()
+        _log_with_time(f"[Orchestrator] Starting main loop, max_steps={self.max_steps}, max_errors={self.max_errors}")
         while not self.done:
             # with open(os.path.join(self.cur_transfer_dir,f"tau_loop_{self.step_count}"),'w') as f:
             #     f.write(f"263, tau self.step_count, {self.step_count}")
@@ -278,6 +299,7 @@ class Orchestrator:
                 self.termination_reason = TerminationReason.TOO_MANY_ERRORS
         # print(279,'finish all steps')
         duration = time.perf_counter() - start
+        _log_with_time(f"[Orchestrator] Simulation loop finished: total_steps={self.step_count}, termination_reason={self.termination_reason}, duration={duration:.3f}s")
         messages = self.get_trajectory()
         res = get_cost(messages)
         if res is None:
@@ -297,6 +319,7 @@ class Orchestrator:
             messages=messages,
             seed=self.seed,
         )
+        _log_with_time(f"[Orchestrator] ========== Simulation completed for task: {self.task.id}, total_duration={duration:.3f}s, total_steps={self.step_count}, messages={len(messages)} ==========")
         return simulation_run
 
     def step(self):
@@ -306,9 +329,11 @@ class Orchestrator:
         This can either be a message from agent to user/environment, environment to agent, or user to agent
         Updates self.trajectory
         """
+        step_start = time.perf_counter()
         # print(299,'step')
         if self.done:
             raise ValueError("Simulation is done")
+        _log_with_time(f"[Orchestrator] Step {self.step_count}: {self.from_role.value} -> {self.to_role.value}")
         logger.debug(
             f"Step {self.step_count}. Sending message from {self.from_role} to {self.to_role}"
         )
@@ -317,13 +342,17 @@ class Orchestrator:
         )
         # AGENT/ENV -> USER
         if self.from_role in [Role.AGENT, Role.ENV] and self.to_role == Role.USER:
+            _log_with_time(f"[Orchestrator] Step {self.step_count}: Generating user response...")
+            user_gen_start = time.perf_counter()
             user_msg, self.user_state = self.user.generate_next_message(
                 self.message, self.user_state
             )
+            _log_with_time(f"[Orchestrator] Step {self.step_count}: User response generated in {time.perf_counter() - user_gen_start:.3f}s")
             user_msg.validate()
             if UserSimulator.is_stop(user_msg):
                 self.done = True
                 self.termination_reason = TerminationReason.USER_STOP
+                _log_with_time(f"[Orchestrator] Step {self.step_count}: User sent STOP signal")
             self.trajectory.append(user_msg)
             self.message = user_msg
             self.from_role = Role.USER
@@ -336,19 +365,24 @@ class Orchestrator:
         elif (
             self.from_role == Role.USER or self.from_role == Role.ENV
         ) and self.to_role == Role.AGENT:
+            _log_with_time(f"[Orchestrator] Step {self.step_count}: Generating agent response...")
+            agent_gen_start = time.perf_counter()
             agent_msg, self.agent_state = self.agent.generate_next_message(
                 self.message, self.agent_state
             )
+            _log_with_time(f"[Orchestrator] Step {self.step_count}: Agent response generated in {time.perf_counter() - agent_gen_start:.3f}s")
             agent_msg.validate()
             if self.agent.is_stop(agent_msg):
                 self.done = True
                 self.termination_reason = TerminationReason.AGENT_STOP
+                _log_with_time(f"[Orchestrator] Step {self.step_count}: Agent sent STOP signal")
             self.trajectory.append(agent_msg)
             self.message = agent_msg
             self.from_role = Role.AGENT
             # print(339,'agent_msg.is_tool_call()',agent_msg.is_tool_call())
             if agent_msg.is_tool_call():
                 self.to_role = Role.ENV
+                _log_with_time(f"[Orchestrator] Step {self.step_count}: Agent making tool call(s): {[tc.name for tc in agent_msg.tool_calls]}")
             else:
                 self.to_role = Role.USER
         # AGENT/USER -> ENV
@@ -356,10 +390,16 @@ class Orchestrator:
             # print(353,'tool call')
             if not self.message.is_tool_call():
                 raise ValueError("Agent or User should send tool call to environment")
+            tool_names = [tc.name for tc in self.message.tool_calls]
+            _log_with_time(f"[Orchestrator] Step {self.step_count}: Executing {len(tool_names)} tool call(s): {tool_names}")
+            tool_exec_start = time.perf_counter()
             tool_msgs = []
-            for tool_call in self.message.tool_calls:
+            for i, tool_call in enumerate(self.message.tool_calls):
+                single_tool_start = time.perf_counter()
                 tool_msg = self.environment.get_response(tool_call)
                 tool_msgs.append(tool_msg)
+                _log_with_time(f"[Orchestrator] Step {self.step_count}: Tool '{tool_call.name}' executed in {time.perf_counter() - single_tool_start:.3f}s, error={tool_msg.error if hasattr(tool_msg, 'error') else False}")
+            _log_with_time(f"[Orchestrator] Step {self.step_count}: All tools executed in {time.perf_counter() - tool_exec_start:.3f}s")
             assert len(self.message.tool_calls) == len(tool_msgs), (
                 "Number of tool calls and tool messages should be the same"
             )
@@ -382,6 +422,7 @@ class Orchestrator:
             )
         self.step_count += 1
         self.environment.sync_tools()
+        _log_with_time(f"[Orchestrator] Step {self.step_count - 1} completed in {time.perf_counter() - step_start:.3f}s, trajectory_len={len(self.trajectory)}")
 
     def get_trajectory(self) -> list[Message]:
         """

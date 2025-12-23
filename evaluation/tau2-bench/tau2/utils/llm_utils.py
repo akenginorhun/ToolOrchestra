@@ -431,8 +431,8 @@ def generate(
     original_tools = copy.deepcopy(tools)
     start_time = time.time()
     cost = 0
-    if role=='assistant' and ('qwen' in model.lower() or 'huggingface' in model.lower() or 'llama' in model.lower() or 'nemotron' in model.lower() or 'orchestrator' in model.lower()):
-        if not 'nemotron' in model.lower():
+    if role=='assistant' and ('qwen' in model.lower() or 'huggingface' in model.lower() or 'llama' in model.lower() or 'nemotron-ultra' in model.lower() or 'nemotron-super' in model.lower() or 'orchestrator' in model.lower()):
+        if not 'nemotron-ultra' in model.lower() and not 'nemotron-super' in model.lower():
             with open(model_config_path) as f:
                 model_config = json.load(f)[model]
             config_idx = random.randint(0, len(model_config)-1)
@@ -446,7 +446,7 @@ def generate(
             updated_tools = tools
         tools_length = len(tokenizer(str(updated_tools))['input_ids'])
         updated_messages = cut_middle_turns(tokenizer=tokenizer,messages=litellm_messages,max_length=23000-tools_length)
-        if 'nemotron' in model.lower():
+        if 'nemotron-ultra' in model.lower() or 'nemotron-super' in model.lower():
             response = get_llm_response(model=model,messages=updated_messages,tools=updated_tools,return_raw_response=True,temperature=1,model_type='nv/dev',max_length=8000)
         else:
             response = get_llm_response(model=model,messages=updated_messages,tools=updated_tools,return_raw_response=True,temperature=1,model_config=model_config,model_config_path=model_config_path,model_config_idx=config_idx,model_type='vllm',max_length=8000)

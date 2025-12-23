@@ -129,6 +129,7 @@ def run_domain(config: RunConfig) -> Results:
         save_to = make_run_name(config)
     save_to = config.output_file
     # print('save path:',save_to)
+    logger.info(f"[INFO] Starting run_tasks for domain={config.domain}, tasks={len(tasks)}")
     simulation_results = run_tasks(
         domain=config.domain,
         tasks=tasks,
@@ -205,13 +206,16 @@ def run_tasks(
     if isinstance(save_to, str):
         save_to = Path(save_to)
     save_dir = str(save_to)
-    assert save_dir.endswith('.json')
+    assert save_dir.endswith('.json'), f"save_dir must end with .json, but got {save_dir}"
     save_dir = save_dir[:-len('.json')]
+    logger.info(f"[INFO] save_dir={save_dir}")
     # updated_tasks = []
 
     # Set log level from config
+    logger.info(f"[INFO] remove logger started, log_level={log_level}")
     logger.remove()
-    logger.add(lambda msg: print(msg), level=log_level)
+    logger.add(lambda msg: print(msg, end="", flush=True), level=log_level)
+    logger.info(f"[INFO] Logger reconfigured with level={log_level} completed")
     if len(tasks) == 0:
         raise ValueError("No tasks to run")
     if num_trials <= 0:
@@ -220,18 +224,14 @@ def run_tasks(
         raise ValueError("Max steps must be greater than 0")
     if max_errors <= 0:
         raise ValueError("Max errors must be greater than 0")
-
     random.seed(seed)
-
     seeds = [random.randint(0, 1000000) for _ in range(num_trials)]
     if "seed" in llm_args_agent:
         logger.warning("Each trial will modify the seed for the agent")
-
     if "seed" in llm_args_user:
         logger.warning("Each trial will modify the seed for the user")
 
     lock = multiprocessing.Lock()
-
     info = get_info(
         domain=domain,
         agent=agent,
@@ -245,6 +245,7 @@ def run_tasks(
         max_errors=max_errors,
         seed=seed,
     )
+    logger.info(f"[INFO] get_info completed")
     simulation_results = Results(
         info=info,
         tasks=tasks,
@@ -274,11 +275,9 @@ def run_tasks(
             
 
     def _run(task: Task, trial: int, seed: int, progress_str: str) -> SimulationRun:
-        # ConsoleDisplay.console.print(
-        #     f"[bold green]{progress_str} Running task {task.id}, trial {trial + 1}[/bold green]"
-        # )
-        # try:
+        logger.info(f"[INFO] _run started: task_id={task.id}, trial={trial}, progress={progress_str}")
         start_time = time.time()
+        logger.info(f"[INFO] Calling run_task for task_id={task.id}")
         simulation = run_task(
             domain=domain,
             task=task,
@@ -296,18 +295,11 @@ def run_tasks(
             model_config_path=model_config_path,
             use_model_tool=use_model_tool
         )
-        # print(310,'before save')
         latency = time.time()-start_time
+        logger.info(f"[INFO] run_task completed for task_id={task.id}, latency={latency:.2f}s")
         simulation.trial = trial
         _save(simulation,latency=latency)
-        # except Exception as e:
-        #     print(f"Tau run error: {e}")
-        #     with open(os.path.join(save_dir,f'{task.id}.json'),'w') as f:
-        #         json.dump({
-        #             'task_id': task.id,
-        #             'tau_run_error': f"Tau run error: {e}"
-        #         },f,indent=2)
-        #     simulation = None
+
         return simulation
 
     args = []
@@ -325,8 +317,11 @@ def run_tasks(
     # if res:
     #     simulation_results.simulations.extend(res)
     # print(309,'len(simulation_results.simulations)', len(simulation_results.simulations))
+    logger.info(f"[INFO] Starting ThreadPoolExecutor with max_workers={max_concurrency}, total_tasks={len(args)}")
     with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        logger.info(f"[INFO] Submitting {len(args)} tasks to executor")
         res = list(executor.map(_run, *zip(*args)))
+        logger.info(f"[INFO] All tasks completed, got {len(res)} results")
         if res:
             simulation_results.simulations.extend(res)
         print(len(simulation_results.simulations))
@@ -385,6 +380,7 @@ def run_task(
     logger.info(
         f"STARTING SIMULATION: Domain: {domain}, Task: {task.id}, Agent: {agent}, User: {user}"
     )
+    logger.info(f"[INFO] run_task: Getting environment constructor for domain={domain}")
     environment_constructor = registry.get_env_constructor(domain)
     environment = environment_constructor()
     AgentConstructor = registry.get_agent_constructor(agent)
@@ -392,8 +388,6 @@ def run_task(
     solo_mode = False
     if issubclass(AgentConstructor, LLMAgent):
         # agent class here
-        # print(395,environment)
-        # exit(0)
         agent = AgentConstructor(
             tools=environment.get_tools(),
             domain_policy=environment.get_policy(),
@@ -438,6 +432,7 @@ def run_task(
             "Dummy user can only be used with solo agent"
         )
 
+    logger.info(f"[INFO] run_task: Creating user with UserConstructor={UserConstructor.__name__}")
     user = UserConstructor(
         tools=user_tools,
         instructions=str(task.user_scenario),
@@ -445,6 +440,7 @@ def run_task(
         llm_args=llm_args_user,
     )
 
+    logger.info(f"[INFO] run_task: Creating Orchestrator")
     orchestrator = Orchestrator(
         domain=domain,
         agent=agent,
@@ -459,9 +455,10 @@ def run_task(
         model_config_path=model_config_path,
         use_model_tool=use_model_tool,
     )
+    logger.info(f"[INFO] run_task: Orchestrator created, starting run()")
     simulation = orchestrator.run()
-    # print(472,'after run')
 
+    logger.info(f"[INFO] run_task: Starting evaluate_simulation")
     reward_info = evaluate_simulation(
         domain=domain,
         task=task,
@@ -469,10 +466,10 @@ def run_task(
         evaluation_type=evaluation_type,
         solo_mode=solo_mode,
     )
-    # print(481,'after eval')
+    logger.info(f"[INFO] run_task: evaluate_simulation completed, reward={reward_info.reward}")
 
     simulation.reward_info = reward_info
-    # print(495,reward_info)
+    logger.info(f"[INFO] simulation.reward_info={simulation.reward_info}")
 
     logger.info(
         f"FINISHED SIMULATION: Domain: {domain}, Task: {task.id}, Agent: {agent.__class__.__name__}, User: {user.__class__.__name__}. Reward: {reward_info.reward}"

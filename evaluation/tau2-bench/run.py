@@ -153,10 +153,10 @@ while True:
         continue
     log(f"Found {len(already_serve)} ready servers: {already_serve}")
     all_times = [s['total_time'] for s in already_serve]
-    if max(all_times)<600:
-        wait_time = 600-max(all_times)
-        log(f"Servers not ready long enough, waiting {wait_time}s...")
-        time.sleep(wait_time)
+    # if max(all_times)<600:
+    #     wait_time = 600-max(all_times)
+    #     log(f"Servers not ready long enough, waiting {wait_time}s...")
+    #     time.sleep(wait_time)
     serve_ips = []
     for s in already_serve:
         with open(f'{s["name"]}.out') as f:

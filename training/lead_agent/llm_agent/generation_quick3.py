@@ -646,7 +646,7 @@ def call_tool(arguments):
                             })
                 else:
                     response_content = "Wait a minute, I will take it very soon"
-            elif 'nemotron' in mode_to_call.lower():
+            elif 'nemotron-ultra' in mode_to_call.lower() or 'nemotron-super' in mode_to_call.lower():
                 latency_testing_start_time = time.time()
                 response = response = oss_client.chat.completions.create(
                     model=mode_to_call,
@@ -1805,7 +1805,7 @@ class LLMGenerationManager:
                             context_str = context_str['string_after_cut']
                             if len(doc_str)>0:
                                 context_str = 'Documents:\n'+context_str
-                        elif 'llama' in cur_model_to_call.lower() or 'nemotron' in cur_model_to_call.lower() or 'phi' in cur_model_to_call.lower():
+                        elif 'llama' in cur_model_to_call.lower() or 'nemotron-ultra' in cur_model_to_call.lower() or 'nemotron-super' in cur_model_to_call.lower() or 'phi' in cur_model_to_call.lower():
                             doc_str = ''
                             for doc_idx, doc in enumerate(doc_list):
                                 doc_str += f"Doc {doc_idx+1}: {doc}\n\n"
@@ -1874,7 +1874,7 @@ class LLMGenerationManager:
                             context_str = context_str['string_after_cut']
                             if len(doc_str)>0:
                                 context_str = 'Documents:\n'+context_str
-                        elif 'llama' in cur_model_to_call.lower() or 'nemotron' in cur_model_to_call.lower() or 'phi' in cur_model_to_call.lower():
+                        elif 'llama' in cur_model_to_call.lower() or 'nemotron-ultra' in cur_model_to_call.lower() or 'nemotron-super' in cur_model_to_call.lower() or 'phi' in cur_model_to_call.lower():
                             doc_str = ''
                             for doc_idx, doc in enumerate(doc_list):
                                 doc_str += f"Doc {doc_idx+1}: {doc}\n\n"
