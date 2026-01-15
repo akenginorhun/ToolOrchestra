@@ -65,6 +65,13 @@ cd "$REPO_ROOT/training"
 # (The training code imports `LLM_CALL.py` from the repo root.)
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 
+# The training rollout code imports a module that creates an `OpenAI(...)` client at import time
+# using env var `OSS_KEY`. Even if you route all experts via OpenRouter, that import still happens.
+# Provide a placeholder to avoid import-time crashes.
+if [[ -z "${OSS_KEY:-}" ]]; then
+  export OSS_KEY="DUMMY_OSS_KEY_NOT_USED_IN_OPENROUTER_RUNS"
+fi
+
 # -------------------------------------------------------------------
 # AMD/ROCm GPU visibility (Ray requirement)
 # -------------------------------------------------------------------
