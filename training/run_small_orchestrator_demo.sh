@@ -61,6 +61,21 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT/training"
 
+# -------------------------------------------------------------------
+# AMD/ROCm GPU visibility (Ray requirement)
+# -------------------------------------------------------------------
+# Ray's AMD GPU detection errors out if ROCR_VISIBLE_DEVICES is set:
+#   "Please use HIP_VISIBLE_DEVICES instead of ROCR_VISIBLE_DEVICES"
+# To make the script robust on ROCm clusters:
+# - If ROCR_VISIBLE_DEVICES is set and HIP_VISIBLE_DEVICES is not, we copy it.
+# - We then unset ROCR_VISIBLE_DEVICES to avoid Ray raising.
+if [[ -n "${ROCR_VISIBLE_DEVICES:-}" ]]; then
+  if [[ -z "${HIP_VISIBLE_DEVICES:-}" ]]; then
+    export HIP_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES}"
+  fi
+  unset ROCR_VISIBLE_DEVICES
+fi
+
 ORCH_BASE_MODEL="${ORCH_BASE_MODEL:-Qwen/Qwen3-8B}"
 ORCH_TP_SIZE="${ORCH_TP_SIZE:-2}"
 ORCH_NUM_GPUS="${ORCH_NUM_GPUS:-2}"
