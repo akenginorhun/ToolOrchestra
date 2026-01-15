@@ -73,6 +73,31 @@ if [[ -z "${OSS_KEY:-}" ]]; then
 fi
 
 # -------------------------------------------------------------------
+# Preflight: ensure PyTorch is ROCm-enabled (otherwise verl picks HCCL backend and crashes)
+# -------------------------------------------------------------------
+python3 - <<'PY'
+import sys
+try:
+    import torch
+except Exception as e:
+    print("[demo][preflight] ERROR: torch import failed:", e)
+    sys.exit(2)
+
+hip = getattr(torch.version, "hip", None)
+cuda_ok = torch.cuda.is_available()
+print(f"[demo][preflight] torch.__version__={torch.__version__} torch.version.hip={hip} torch.cuda.is_available()={cuda_ok}")
+
+# On ROCm builds, torch.cuda.is_available() should typically be True and torch.version.hip non-empty.
+if not cuda_ok and not hip:
+    print("[demo][preflight] ERROR: This looks like a CPU-only PyTorch install.")
+    print("[demo][preflight] On AMD GPUs you need a ROCm-enabled PyTorch build; otherwise verl defaults to an HCCL backend and crashes.")
+    print("[demo][preflight] Fix options:")
+    print("  1) Use the repo's ROCm container (training/docker/Dockerfile.rocm or training/docker/Apptainerfile.rocm).")
+    print("  2) Reinstall ROCm PyTorch wheels for your ROCm version (e.g., via PyTorch's rocm index URL), then rerun.")
+    sys.exit(3)
+PY
+
+# -------------------------------------------------------------------
 # AMD/ROCm GPU visibility (Ray requirement)
 # -------------------------------------------------------------------
 # Ray's AMD GPU detection errors out if ROCR_VISIBLE_DEVICES is set:
