@@ -76,6 +76,18 @@ if [[ -n "${ROCR_VISIBLE_DEVICES:-}" ]]; then
   unset ROCR_VISIBLE_DEVICES
 fi
 
+# Ray on AMD also raises if BOTH HIP_VISIBLE_DEVICES and CUDA_VISIBLE_DEVICES are set inconsistently:
+#   "Please use either HIP_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES."
+# Standardize on HIP_VISIBLE_DEVICES (preferred for ROCm):
+# - If HIP is set, unset CUDA (regardless of value) to avoid conflicts.
+# - Else if CUDA is set, copy it to HIP and then unset CUDA.
+if [[ -n "${HIP_VISIBLE_DEVICES:-}" ]]; then
+  unset CUDA_VISIBLE_DEVICES
+elif [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+  export HIP_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}"
+  unset CUDA_VISIBLE_DEVICES
+fi
+
 ORCH_BASE_MODEL="${ORCH_BASE_MODEL:-Qwen/Qwen3-8B}"
 ORCH_TP_SIZE="${ORCH_TP_SIZE:-2}"
 ORCH_NUM_GPUS="${ORCH_NUM_GPUS:-2}"
