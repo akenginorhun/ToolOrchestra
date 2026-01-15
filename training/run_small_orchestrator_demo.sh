@@ -61,6 +61,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT/training"
 
+# Ensure repo root is importable so `from LLM_CALL import ...` works from training modules.
+# (The training code imports `LLM_CALL.py` from the repo root.)
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
+
 # -------------------------------------------------------------------
 # AMD/ROCm GPU visibility (Ray requirement)
 # -------------------------------------------------------------------
