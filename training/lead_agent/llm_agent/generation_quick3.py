@@ -143,6 +143,53 @@ def call_tool(arguments):
             generated_code = ''
             model_name = arguments['cur_model_mapping'][arguments['model']]
             cur_tool_pricing = arguments['cur_tool_pricing']
+            # =========================
+            # BEGIN OPENROUTER PATCH
+            # =========================
+            # If expert model is provided via OpenRouter (OpenAI-compatible), route through LLM_CALL
+            # and avoid local vLLM assumptions.
+            if isinstance(model_name, str) and model_name.startswith("openrouter/"):
+                prompt = arguments['context_str'].strip()+'\n\n'
+                prompt += f"Question: {arguments['problem']}\nInstead of directly answering the question, please write additional python code that will give intermidiate results after execution. Wrap the code within ```python and ```. The code should be self-contained with all the import and initialization."
+                latency_testing_start_time = time.time()
+                response = get_llm_response(
+                    model=model_name,
+                    messages=prompt,
+                    return_raw_response=True,
+                    temperature=0.2,
+                    max_length=8000,
+                )
+                latency_testing_end_time = time.time()
+                if isinstance(response,str) or not response.choices[0].message.content:
+                    latency = time.time()-start
+                    arguments['generated_code'] = ''
+                    arguments['exec_result'] = ''
+                    arguments['prompt_tokens'] = 0
+                    arguments['completion_tokens'] = 0
+                    arguments['latency'] = time.time() - start_time
+                    arguments['cost'] = cost
+                    return arguments
+                if not 'tokens_pic' in arguments:
+                    arguments['tokens_pic'] = []
+                arguments['tokens_pic'].append({
+                    'input_tokens': getattr(response.usage, "prompt_tokens", 0),
+                    'output_tokens': getattr(response.usage, "completion_tokens", 0),
+                    'model': model_name,
+                    'latency': latency_testing_end_time-latency_testing_start_time
+                })
+                try:
+                    cost = cost + (cur_tool_pricing.get(model_name, {}).get('input_tokens_per_million', 0) * getattr(response.usage, "prompt_tokens", 0)
+                                   + getattr(response.usage, "completion_tokens", 0) * cur_tool_pricing.get(model_name, {}).get('output_tokens_per_million', 0))
+                except Exception:
+                    pass
+                try:
+                    generated_code = response.choices[0].message.content.split('```python')[-1].split('```')[0]
+                except Exception:
+                    generated_code = ''
+                # continue into the shared "execute python" block below
+            # =========================
+            # END OPENROUTER PATCH
+            # =========================
             if model_name in ['o3','o3-mini','gpt-5','gpt-5-mini']:
                 prompt = arguments['context_str'].strip()+'\n\n'
                 prompt += f"Question: {arguments['problem']}\nInstead of directly answering the question, please write additional python code that will give intermidiate results after execution. Wrap the code within ```python and ```. The code should be self-contained with all the import and initialization."
@@ -260,6 +307,67 @@ def call_tool(arguments):
             cur_tool_pricing = arguments['cur_tool_pricing']
             
             start_time = time.time()
+            # =========================
+            # BEGIN OPENROUTER PATCH
+            # =========================
+            if isinstance(cur_answer_model, str) and cur_answer_model.startswith("openrouter/"):
+                model_name = cur_answer_model
+                prompt2 = prompt + "\nWrap the thinking process and explanation between <think> and </think> and wrap only the exact answer without any explanation within <answer> and </answer>."
+                latency_testing_start_time = time.time()
+                response = get_llm_response(
+                    model=model_name,
+                    messages=[{"role":"user","content": prompt2}],
+                    return_raw_response=True,
+                    temperature=0.2,
+                    max_length=8000,
+                )
+                latency_testing_end_time = time.time()
+                if isinstance(response,str) or not response.choices[0].message.content:
+                    latency = time.time()-start
+                    arguments['response'] = ''
+                    arguments['pred'] = ''
+                    arguments['correctness'] = False
+                    arguments['prompt_tokens'] = 0
+                    arguments['completion_tokens'] = 0
+                    arguments['latency'] = time.time() - start_time
+                    arguments['cost'] = cost
+                    return arguments
+                if not 'tokens_pic' in arguments:
+                    arguments['tokens_pic'] = []
+                arguments['tokens_pic'].append({
+                    'input_tokens': getattr(response.usage, "prompt_tokens", 0),
+                    'output_tokens': getattr(response.usage, "completion_tokens", 0),
+                    'model': model_name,
+                    'latency': latency_testing_end_time-latency_testing_start_time
+                })
+                response_str = response.choices[0].message.content
+                try:
+                    cost = cost + (cur_tool_pricing.get(model_name, {}).get('input_tokens_per_million', 0) * getattr(response.usage, "prompt_tokens", 0)
+                                   + getattr(response.usage, "completion_tokens", 0) * cur_tool_pricing.get(model_name, {}).get('output_tokens_per_million', 0))
+                except Exception:
+                    pass
+                pred = response_str.split('<answer>')[-1].split('</answer>')[0].strip()
+                latency = time.time()-start_time
+                if pred.strip()=='' or len(pred.split(' '))>500:
+                    correctness = False
+                elif pred.strip().lower()==arguments['answer'].strip().lower():
+                    correctness = True
+                else:
+                    correctness = False
+                arguments['response'] = response_str
+                arguments['pred'] = pred
+                arguments['correctness'] = correctness
+                arguments['prompt_tokens'] = getattr(response.usage, "prompt_tokens", 0)
+                arguments['completion_tokens'] = getattr(response.usage, "completion_tokens", 0)
+                arguments['latency'] = latency
+                arguments['cost'] = cost
+                arguments['used_llm'] = cur_answer_model
+                if 'tokenizer' in arguments:
+                    arguments.pop('tokenizer')
+                return arguments
+            # =========================
+            # END OPENROUTER PATCH
+            # =========================
             if 'math' in cur_answer_model.lower():
                 model_name = cur_answer_model
                 messages = [{"content": prompt+"\nLet's think step by step and output the final answer within \\boxed{}.", "role": "user"}]
@@ -437,12 +545,18 @@ def call_tool(arguments):
                         f"Student answer: {pred}\n\n"
                         f"Reference answer: {arguments['answer']}\n\n"
                         "Assume that the reference answer is correct. Output <correct>True</correct> if the student answer matches the reference answer. Output <correct>False</correct> if the student answer does not match the reference answer.")
-                eval_result = get_llm_response(model='gpt-5',messages=eval_prompt,temperature=1)
-                eval_result = eval_result.split('<correct>')[-1].split('</correct>')[0]
-                if eval_result.lower()=='true':
-                    correctness = True
-                else:
+                # Small-scale/local training convenience:
+                # The original code uses GPT-5 as an LLM-as-a-judge for fuzzy answer matching.
+                # That requires external access. For small-scale runs, allow disabling it.
+                if os.environ.get("TOOLORCHESTRA_DISABLE_LLM_JUDGE", "0").strip() in ("1", "true", "True", "YES", "yes"):
                     correctness = False
+                else:
+                    eval_result = get_llm_response(model='gpt-5',messages=eval_prompt,temperature=1)
+                    eval_result = eval_result.split('<correct>')[-1].split('</correct>')[0]
+                    if eval_result.lower()=='true':
+                        correctness = True
+                    else:
+                        correctness = False
             arguments['response'] = response_str
             arguments['pred'] = pred
             arguments['correctness'] = correctness
@@ -470,6 +584,41 @@ def call_tool(arguments):
                 arguments['used_llm'] = cur_query_writer
                 query_to_call = None
                 start_time = time.time()
+                # =========================
+                # BEGIN OPENROUTER PATCH
+                # =========================
+                if isinstance(cur_query_writer, str) and cur_query_writer.startswith("openrouter/"):
+                    latency_testing_start_time = time.time()
+                    response = get_llm_response(
+                        model=cur_query_writer,
+                        messages=[{"role":"user","content": prompt}],
+                        return_raw_response=True,
+                        temperature=0.2,
+                        max_length=2000,
+                    )
+                    latency_testing_end_time = time.time()
+                    if isinstance(response,str) or not response.choices[0].message.content:
+                        query_to_call = arguments['problem']
+                    else:
+                        if not 'tokens_pic' in arguments:
+                            arguments['tokens_pic'] = []
+                        arguments['tokens_pic'].append({
+                            'input_tokens': getattr(response.usage, "prompt_tokens", 0),
+                            'output_tokens': getattr(response.usage, "completion_tokens", 0),
+                            'model': cur_query_writer,
+                            'latency': latency_testing_end_time-latency_testing_start_time
+                        })
+                        query_to_call = response.choices[0].message.content.split('<query>')[-1].split('</query>')[0].strip()
+                        if len(query_to_call)<5:
+                            query_to_call = arguments['problem']
+                        try:
+                            cost = cost + (cur_tool_pricing.get(cur_query_writer, {}).get('input_tokens_per_million', 0) * getattr(response.usage, "prompt_tokens", 0)
+                                           + getattr(response.usage, "completion_tokens", 0) * cur_tool_pricing.get(cur_query_writer, {}).get('output_tokens_per_million', 0))
+                        except Exception:
+                            pass
+                # =========================
+                # END OPENROUTER PATCH
+                # =========================
                 if cur_query_writer in ['o3','o3-mini','gpt-5','gpt-5-mini']:
                     latency_testing_start_time = time.time()
                     response = get_llm_response(model=cur_query_writer,messages=prompt,return_raw_response=True,temperature=1,max_length=28000)

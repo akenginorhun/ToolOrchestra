@@ -25,6 +25,50 @@ from openai import OpenAI
 import random
 from typing import List, Tuple, Dict, Any, Optional
 
+# =========================
+# BEGIN OPENROUTER PATCH
+# =========================
+# This repo originally targets NVIDIA-internal Azure/OpenAI endpoints and local vLLM.
+# For small-scale reproduction on your own cluster, we add an OpenRouter backend
+# (OpenAI-compatible API) that can be used for "expert" models.
+#
+# How to use:
+# - Set env var: OPENROUTER_API_KEY
+# - Call get_llm_response with model prefixed by "openrouter/", e.g.:
+#     model="openrouter/openai/gpt-4o-mini"
+#
+# This patch is intentionally isolated so it's easy to find/remove later.
+from copy import deepcopy
+
+def _is_openrouter_model(model: str, model_type: Optional[str] = None) -> bool:
+    if model_type == "openrouter":
+        return True
+    return isinstance(model, str) and model.startswith("openrouter/")
+
+def _strip_openrouter_prefix(model: str) -> str:
+    return model.split("openrouter/", 1)[1] if model.startswith("openrouter/") else model
+
+def _get_openrouter_client() -> OpenAI:
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY is not set")
+    # Optional but recommended by OpenRouter: identify your app.
+    headers = {}
+    site_url = os.getenv("OPENROUTER_SITE_URL")
+    app_name = os.getenv("OPENROUTER_APP_NAME")
+    if site_url:
+        headers["HTTP-Referer"] = site_url
+    if app_name:
+        headers["X-Title"] = app_name
+    return OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        default_headers=headers or None,
+    )
+# =========================
+# END OPENROUTER PATCH
+# =========================
+
 KEYS_DIR = 'keys'
 if not os.path.isdir(KEYS_DIR):
     os.makedirs(KEYS_DIR,exist_ok=True)
@@ -291,6 +335,37 @@ def get_openai_client(model):
 def get_llm_response(model,messages,temperature=1.0,return_raw_response=False,tools=None,show_messages=False,model_type=None,max_length=1024,model_config=None,model_config_idx=0,model_config_path=None,payload=None,**kwargs):
     if isinstance(messages,str):
         messages = [{'role': 'user','content': messages}]
+
+    # =========================
+    # BEGIN OPENROUTER PATCH
+    # =========================
+    # Route "openrouter/..." models through OpenRouter. This is useful for expert models
+    # so you don't need to host many large checkpoints locally.
+    if _is_openrouter_model(model=model, model_type=model_type):
+        openrouter_model = _strip_openrouter_prefix(model)
+        client = _get_openrouter_client()
+        answer = ''
+        # OpenRouter is OpenAI-compatible; use Chat Completions.
+        while answer == '':
+            try:
+                chat_completion = client.chat.completions.create(
+                    model=openrouter_model,
+                    messages=messages,
+                    temperature=temperature,
+                    tools=tools,
+                    max_tokens=max_length,
+                )
+                if return_raw_response:
+                    answer = chat_completion
+                else:
+                    answer = chat_completion.choices[0].message.content
+            except Exception:
+                time.sleep(5)
+        return answer
+    # =========================
+    # END OPENROUTER PATCH
+    # =========================
+
     if model in ['o3','o3-mini','gpt-4o','o3-high','gpt-5','gpt-5-mini','gpt-4.1','gpt-4o-mini']:
         if max_length==1024:
             max_length = 40000

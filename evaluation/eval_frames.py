@@ -170,6 +170,28 @@ def cut_seq(seq,l):
 def call_tool(arguments):
     start_time = time.time()
     if arguments['tool']=='enhance_reasoning':
+        # =========================
+        # BEGIN OPENROUTER PATCH
+        # =========================
+        if isinstance(arguments.get('model'), str) and arguments['model'].startswith("openrouter/"):
+            prompt = arguments['context_str'].strip()+'\n\n'
+            prompt += f"Question: {arguments['problem']}\nInstead of directly answering the question, please write additional python code that will give intermidiate results after execution. Wrap the code within ```python and ```. The code should be self-contained with all the import and initialization."
+            model_name = arguments['model']
+            response = get_llm_response(model=model_name,messages=prompt,return_raw_response=True,temperature=0.2,max_length=8000)
+            if isinstance(response,str):
+                arguments['generated_code'] = ''
+                arguments['exec_result'] = ''
+                return arguments
+            try:
+                generated_code = response.choices[0].message.content.split('```python')[-1].split('```')[0]
+            except Exception:
+                generated_code = ''
+            arguments['generated_code'] = generated_code
+            arguments['exec_result'] = ''
+            return arguments
+        # =========================
+        # END OPENROUTER PATCH
+        # =========================
         supported_models = [MODEL_MAPPING[m] for m in ALL_TOOLS['enhance_reasoning']['model']]
         assert arguments['model'] in supported_models,f"Model {arguments['model']} is not supported in enhance_reasoning. Support models: {supported_models}"
         prompt = arguments['context_str'].strip()+'\n\n'
@@ -231,6 +253,29 @@ def call_tool(arguments):
         prompt = arguments['context_str'].strip()+'\n\n'+arguments['problem']
         response_str = ''
         pred = ''
+
+        # =========================
+        # BEGIN OPENROUTER PATCH
+        # =========================
+        if isinstance(arguments.get('model'), str) and arguments['model'].startswith("openrouter/"):
+            model_name = arguments['model']
+            prompt2 = prompt + "\nWrap the thinking process and explanation between <think> and </think> and wrap only the exact answer without any explanation within <answer> and </answer>."
+            response = get_llm_response(model=model_name,messages=[{"role":"user","content":prompt2}],return_raw_response=True,temperature=0.2,max_length=8000)
+            if isinstance(response,str):
+                arguments['response'] = ''
+                arguments['pred'] = ''
+                arguments['correctness'] = False
+                return arguments
+            response_str = response.choices[0].message.content
+            pred = response_str.split('<answer>')[-1].split('</answer>')[0].strip()
+            correctness = (pred.strip().lower()==arguments['answer'].strip().lower()) if pred else False
+            arguments['response'] = response_str
+            arguments['pred'] = pred
+            arguments['correctness'] = correctness
+            return arguments
+        # =========================
+        # END OPENROUTER PATCH
+        # =========================
 
         if 'qwen3' in arguments['model'].lower() and not '235' in arguments['model'].lower():
             model_name = arguments['model']
@@ -339,6 +384,22 @@ def call_tool(arguments):
         prompt += f"Question: {arguments['problem']}\nInstead of directly answering the question, please think hard and write a concise query to search Wikipedia. Wrap the query within <query> and </query>."
         cur_query_writer = arguments['model']
         query_to_call = None
+        # =========================
+        # BEGIN OPENROUTER PATCH
+        # =========================
+        if isinstance(cur_query_writer, str) and cur_query_writer.startswith("openrouter/"):
+            response = get_llm_response(model=cur_query_writer,messages=[{"role":"user","content":prompt}],return_raw_response=True,temperature=0.2,max_length=2000)
+            if isinstance(response,str) or not response.choices[0].message.content:
+                query_to_call = arguments['problem']
+            else:
+                query_to_call = response.choices[0].message.content.split('<query>')[-1].split('</query>')[0].strip()
+            arguments['search_results_data'] = []
+            if 'tokenizer' in arguments:
+                arguments.pop('tokenizer')
+            return arguments
+        # =========================
+        # END OPENROUTER PATCH
+        # =========================
         if 'gpt-5' in cur_query_writer.lower():
             response = get_llm_response(model=cur_query_writer,messages=prompt,return_raw_response=True,temperature=1,max_length=40000)
             if isinstance(response,str) or not response.choices[0].message.content:
