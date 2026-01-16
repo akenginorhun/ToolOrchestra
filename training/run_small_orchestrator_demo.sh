@@ -66,14 +66,38 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT/training"
 
 # -------------------------------------------------------------------
-# Optional: run inside a ROCm container (recommended on AMD clusters)
+# Optional: run inside a container (ROCm for AMD, optional for NVIDIA)
 # -------------------------------------------------------------------
 # We do NOT attempt to "install Docker" or "install Apptainer" because that requires
 # admin rights / cluster policy. Instead, we:
 # - auto-detect apptainer/singularity or docker
 # - optionally build the image if BUILD_CONTAINER=1
 # - re-exec this same script inside the container
-CONTAINER_MODE="${CONTAINER_MODE:-auto}"          # auto|none|apptainer|docker
+#
+# NOTE: On NVIDIA CUDA systems, containerization is typically NOT needed since
+# CUDA PyTorch is commonly installed natively. Set CONTAINER_MODE=none to skip.
+# On AMD ROCm systems, containers are recommended due to complex library dependencies.
+
+# Detect GPU type early to set container defaults
+_early_gpu_check="unknown"
+if python3 -c "import torch; exit(0 if getattr(torch.version, 'hip', None) else 1)" 2>/dev/null; then
+  _early_gpu_check="rocm"
+elif python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+  _early_gpu_check="cuda"
+fi
+
+# Set container mode defaults based on GPU platform
+# - AMD ROCm: default to auto (use container if available)
+# - NVIDIA CUDA: default to none (run natively)
+if [[ -z "${CONTAINER_MODE:-}" ]]; then
+  if [[ "$_early_gpu_check" == "cuda" ]]; then
+    CONTAINER_MODE="none"
+    echo "[demo][container] NVIDIA CUDA detected - defaulting to CONTAINER_MODE=none (native execution)"
+  else
+    CONTAINER_MODE="auto"
+  fi
+fi
+
 BUILD_CONTAINER="${BUILD_CONTAINER:-0}"
 APPTAINER_IMAGE="${APPTAINER_IMAGE:-$REPO_ROOT/training/outputs/containers/toolorchestra_rocm.sif}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-toolorchestra-rocm:demo}"
@@ -118,11 +142,25 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
     export APPTAINER_CONTAINLIBS=
     export SINGULARITY_CONTAINLIBS=
     
+    # Build bind mounts array - always include repo root
+    _bind_mounts="$REPO_ROOT:$REPO_ROOT"
+    # If HF_HOME is set and exists, bind it so cached models are accessible
+    if [[ -n "${HF_HOME:-}" && -d "${HF_HOME}" ]]; then
+      _bind_mounts="${_bind_mounts},${HF_HOME}:${HF_HOME}"
+      echo "[demo][container] binding HF_HOME: ${HF_HOME}"
+    fi
+    # If ORCH_BASE_MODEL is a local path (not HF model id), bind its parent directory
+    if [[ -d "${ORCH_BASE_MODEL:-}" ]]; then
+      _model_parent="$(dirname "${ORCH_BASE_MODEL}")"
+      _bind_mounts="${_bind_mounts},${_model_parent}:${_model_parent}"
+      echo "[demo][container] binding model directory: ${_model_parent}"
+    fi
+    
     exec "${appt}" exec \
       --rocm \
       --no-home \
       --cleanenv \
-      --bind "$REPO_ROOT:$REPO_ROOT" \
+      --bind "${_bind_mounts}" \
       --pwd "$REPO_ROOT" \
       --env TOOLORCHESTRA_IN_CONTAINER=1 \
       --env OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
@@ -142,6 +180,9 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       --env EXPERT_VLLM_PORT="${EXPERT_VLLM_PORT:-}" \
       --env OUT_ROOT="${OUT_ROOT:-}" \
       --env SKIP_VLLM="${SKIP_VLLM:-}" \
+      --env HF_HOME="${HF_HOME:-}" \
+      --env HF_TOKEN="${HF_TOKEN:-}" \
+      --env HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-}" \
       --env PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
       --env LD_LIBRARY_PATH="/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/lib" \
       "${APPTAINER_IMAGE}" \
@@ -161,10 +202,22 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       fi
     fi
     echo "[demo][container] running inside docker: ${DOCKER_IMAGE}"
+    # Build volume mounts
+    _docker_vols="-v $REPO_ROOT:/workspace"
+    if [[ -n "${HF_HOME:-}" && -d "${HF_HOME}" ]]; then
+      _docker_vols="${_docker_vols} -v ${HF_HOME}:${HF_HOME}"
+      echo "[demo][container] binding HF_HOME: ${HF_HOME}"
+    fi
+    if [[ -d "${ORCH_BASE_MODEL:-}" ]]; then
+      _model_parent="$(dirname "${ORCH_BASE_MODEL}")"
+      _docker_vols="${_docker_vols} -v ${_model_parent}:${_model_parent}"
+      echo "[demo][container] binding model directory: ${_model_parent}"
+    fi
+    
     exec docker run --rm -it \
       --device=/dev/kfd --device=/dev/dri --group-add video \
       --ipc=host --shm-size=32g \
-      -v "$REPO_ROOT:/workspace" -w /workspace \
+      ${_docker_vols} -w /workspace \
       -e TOOLORCHESTRA_IN_CONTAINER=1 \
       -e OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
       -e OPENROUTER_EXPERTS_BY_KEY_JSON="${OPENROUTER_EXPERTS_BY_KEY_JSON:-}" \
@@ -183,6 +236,9 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       -e EXPERT_VLLM_PORT="${EXPERT_VLLM_PORT:-}" \
       -e OUT_ROOT="${OUT_ROOT:-}" \
       -e SKIP_VLLM="${SKIP_VLLM:-}" \
+      -e HF_HOME="${HF_HOME:-}" \
+      -e HF_TOKEN="${HF_TOKEN:-}" \
+      -e HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-}" \
       "${DOCKER_IMAGE}" \
       bash -lc "cd /workspace && CONTAINER_MODE=none bash training/run_small_orchestrator_demo.sh"
   fi
@@ -205,7 +261,7 @@ if [[ -z "${OSS_KEY:-}" ]]; then
 fi
 
 # -------------------------------------------------------------------
-# Preflight: ensure PyTorch is ROCm-enabled (otherwise verl picks HCCL backend and crashes)
+# Preflight: ensure PyTorch has GPU support (CUDA or ROCm)
 # -------------------------------------------------------------------
 python3 - <<'PY'
 import sys
@@ -219,41 +275,62 @@ hip = getattr(torch.version, "hip", None)
 cuda_ok = torch.cuda.is_available()
 print(f"[demo][preflight] torch.__version__={torch.__version__} torch.version.hip={hip} torch.cuda.is_available()={cuda_ok}")
 
-# On ROCm builds, torch.cuda.is_available() should typically be True and torch.version.hip non-empty.
-if not cuda_ok and not hip:
+# Determine GPU platform
+if hip:
+    print("[demo][preflight] GPU platform: AMD ROCm")
+elif cuda_ok:
+    print("[demo][preflight] GPU platform: NVIDIA CUDA")
+    # Additional CUDA checks
+    device_count = torch.cuda.device_count()
+    print(f"[demo][preflight] CUDA device count: {device_count}")
+    for i in range(device_count):
+        print(f"[demo][preflight]   GPU {i}: {torch.cuda.get_device_name(i)}")
+else:
     print("[demo][preflight] ERROR: This looks like a CPU-only PyTorch install.")
-    print("[demo][preflight] On AMD GPUs you need a ROCm-enabled PyTorch build; otherwise verl defaults to an HCCL backend and crashes.")
+    print("[demo][preflight] GPU training requires either CUDA or ROCm-enabled PyTorch.")
     print("[demo][preflight] Fix options:")
-    print("  1) Use the repo's ROCm container (training/docker/Dockerfile.rocm or training/docker/Apptainerfile.rocm).")
-    print("  2) Reinstall ROCm PyTorch wheels for your ROCm version (e.g., via PyTorch's rocm index URL), then rerun.")
+    print("  - For NVIDIA GPUs: Install PyTorch with CUDA support (pip install torch --index-url https://download.pytorch.org/whl/cu121)")
+    print("  - For AMD GPUs: Use the repo's ROCm container or install ROCm PyTorch wheels")
     sys.exit(3)
 PY
 
 # -------------------------------------------------------------------
-# AMD/ROCm GPU visibility (Ray requirement)
+# GPU platform detection and visibility (NVIDIA CUDA vs AMD ROCm)
 # -------------------------------------------------------------------
-# Ray's AMD GPU detection errors out if ROCR_VISIBLE_DEVICES is set:
-#   "Please use HIP_VISIBLE_DEVICES instead of ROCR_VISIBLE_DEVICES"
-# To make the script robust on ROCm clusters:
-# - If ROCR_VISIBLE_DEVICES is set and HIP_VISIBLE_DEVICES is not, we copy it.
-# - We then unset ROCR_VISIBLE_DEVICES to avoid Ray raising.
-if [[ -n "${ROCR_VISIBLE_DEVICES:-}" ]]; then
-  if [[ -z "${HIP_VISIBLE_DEVICES:-}" ]]; then
-    export HIP_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES}"
-  fi
-  unset ROCR_VISIBLE_DEVICES
+# Detect if we're running on AMD ROCm or NVIDIA CUDA
+GPU_PLATFORM="unknown"
+if python3 -c "import torch; exit(0 if getattr(torch.version, 'hip', None) else 1)" 2>/dev/null; then
+  GPU_PLATFORM="rocm"
+elif python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+  GPU_PLATFORM="cuda"
 fi
+echo "[demo] detected GPU platform: $GPU_PLATFORM"
 
-# Ray on AMD also raises if BOTH HIP_VISIBLE_DEVICES and CUDA_VISIBLE_DEVICES are set inconsistently:
-#   "Please use either HIP_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES."
-# Standardize on HIP_VISIBLE_DEVICES (preferred for ROCm):
-# - If HIP is set, unset CUDA (regardless of value) to avoid conflicts.
-# - Else if CUDA is set, copy it to HIP and then unset CUDA.
-if [[ -n "${HIP_VISIBLE_DEVICES:-}" ]]; then
-  unset CUDA_VISIBLE_DEVICES
-elif [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-  export HIP_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}"
-  unset CUDA_VISIBLE_DEVICES
+if [[ "$GPU_PLATFORM" == "rocm" ]]; then
+  # Ray's AMD GPU detection errors out if ROCR_VISIBLE_DEVICES is set:
+  #   "Please use HIP_VISIBLE_DEVICES instead of ROCR_VISIBLE_DEVICES"
+  # To make the script robust on ROCm clusters:
+  # - If ROCR_VISIBLE_DEVICES is set and HIP_VISIBLE_DEVICES is not, we copy it.
+  # - We then unset ROCR_VISIBLE_DEVICES to avoid Ray raising.
+  if [[ -n "${ROCR_VISIBLE_DEVICES:-}" ]]; then
+    if [[ -z "${HIP_VISIBLE_DEVICES:-}" ]]; then
+      export HIP_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES}"
+    fi
+    unset ROCR_VISIBLE_DEVICES
+  fi
+
+  # Ray on AMD also raises if BOTH HIP_VISIBLE_DEVICES and CUDA_VISIBLE_DEVICES are set inconsistently:
+  #   "Please use either HIP_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES."
+  # Standardize on HIP_VISIBLE_DEVICES (preferred for ROCm):
+  if [[ -n "${HIP_VISIBLE_DEVICES:-}" ]]; then
+    unset CUDA_VISIBLE_DEVICES
+  elif [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    export HIP_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}"
+    unset CUDA_VISIBLE_DEVICES
+  fi
+else
+  # NVIDIA CUDA: keep CUDA_VISIBLE_DEVICES as-is, don't touch HIP variables
+  echo "[demo] NVIDIA CUDA detected - keeping CUDA_VISIBLE_DEVICES intact"
 fi
 
 ORCH_BASE_MODEL="${ORCH_BASE_MODEL:-Qwen/Qwen3-8B}"
@@ -592,7 +669,7 @@ python3 -u -m recipe.algo.main_grpo_quick3 \
   +data.vllm_model_configs="$VLLM_CONFIG" \
   +data.my_output_dir="$OUT_DIR/run_artifacts" \
   +data.cur_transfer_dir="$OUT_DIR/transfer" \
-  +data.model_type="Qwen/Qwen3-8B" \
+  +data.model_type="$ORCH_BASE_MODEL" \
   +data.topk_doc=3 \
   +data.exp_tag="small_demo" \
   +data.use_llm_reward=false \
