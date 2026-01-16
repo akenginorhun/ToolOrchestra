@@ -92,6 +92,11 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
     if [[ ! -f "${APPTAINER_IMAGE}" ]]; then
       if [[ "${BUILD_CONTAINER}" == "1" ]]; then
         echo "[demo][container] building apptainer image: ${APPTAINER_IMAGE}"
+        # Set Apptainer cache to a location with sufficient space
+        export APPTAINER_CACHEDIR="$REPO_ROOT/training/outputs/containers/apptainer_cache"
+        export SINGULARITY_CACHEDIR="$APPTAINER_CACHEDIR"  # For older singularity versions
+        mkdir -p "$APPTAINER_CACHEDIR"
+        echo "[demo][container] using cache directory: ${APPTAINER_CACHEDIR}"
         "${appt}" build "${APPTAINER_IMAGE}" "$REPO_ROOT/training/docker/Apptainerfile.rocm"
       else
         echo "[demo][container] ERROR: APPTAINER_IMAGE not found: ${APPTAINER_IMAGE}"
