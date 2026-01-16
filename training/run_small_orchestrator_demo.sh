@@ -114,14 +114,23 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       fi
     fi
     echo "[demo][container] running inside apptainer: ${APPTAINER_IMAGE}"
-    # Use --contain to isolate container and prevent host library binding issues
-    # Manually bind ROCm devices and directories needed for execution
+    # Bind ROCm installation directory (common paths: /opt/rocm, /opt/rocm-*)
+    ROCM_BINDS=""
+    for rocm_dir in /opt/rocm /opt/rocm-*; do
+      if [[ -d "$rocm_dir" ]]; then
+        ROCM_BINDS="$ROCM_BINDS --bind $rocm_dir:$rocm_dir"
+        echo "[demo][container] binding ROCm directory: $rocm_dir"
+        break
+      fi
+    done
+    
     exec "${appt}" exec \
       --contain \
       --writable-tmpfs \
       --bind "$REPO_ROOT:$REPO_ROOT" \
       --bind /dev/kfd:/dev/kfd \
       --bind /dev/dri:/dev/dri \
+      $ROCM_BINDS \
       --pwd "$REPO_ROOT" \
       --env TOOLORCHESTRA_IN_CONTAINER=1 \
       --env OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
