@@ -329,8 +329,10 @@ if [[ "$GPU_PLATFORM" == "rocm" ]]; then
     unset CUDA_VISIBLE_DEVICES
   fi
 else
-  # NVIDIA CUDA: keep CUDA_VISIBLE_DEVICES as-is, don't touch HIP variables
+  # NVIDIA CUDA: keep CUDA_VISIBLE_DEVICES as-is, unset AMD ROCm variables
   echo "[demo] NVIDIA CUDA detected - keeping CUDA_VISIBLE_DEVICES intact"
+  unset HIP_VISIBLE_DEVICES
+  unset ROCR_VISIBLE_DEVICES
 fi
 
 ORCH_BASE_MODEL="${ORCH_BASE_MODEL:-Qwen/Qwen3-8B}"
