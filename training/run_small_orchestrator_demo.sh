@@ -131,6 +131,17 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       --env HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-}" \
       --env ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-}" \
       --env CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}" \
+      --env ORCH_BASE_MODEL="${ORCH_BASE_MODEL:-}" \
+      --env ORCH_TP_SIZE="${ORCH_TP_SIZE:-}" \
+      --env ORCH_NUM_GPUS="${ORCH_NUM_GPUS:-}" \
+      --env NUM_EXAMPLES="${NUM_EXAMPLES:-}" \
+      --env MAX_TURNS="${MAX_TURNS:-}" \
+      --env RETRIEVER_PORT="${RETRIEVER_PORT:-}" \
+      --env START_LOCAL_EXPERT_VLLM="${START_LOCAL_EXPERT_VLLM:-}" \
+      --env EXPERT_MODEL="${EXPERT_MODEL:-}" \
+      --env EXPERT_VLLM_PORT="${EXPERT_VLLM_PORT:-}" \
+      --env OUT_ROOT="${OUT_ROOT:-}" \
+      --env SKIP_VLLM="${SKIP_VLLM:-}" \
       --env PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
       --env LD_LIBRARY_PATH="/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/lib" \
       "${APPTAINER_IMAGE}" \
@@ -161,6 +172,17 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       -e HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-}" \
       -e ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-}" \
       -e CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}" \
+      -e ORCH_BASE_MODEL="${ORCH_BASE_MODEL:-}" \
+      -e ORCH_TP_SIZE="${ORCH_TP_SIZE:-}" \
+      -e ORCH_NUM_GPUS="${ORCH_NUM_GPUS:-}" \
+      -e NUM_EXAMPLES="${NUM_EXAMPLES:-}" \
+      -e MAX_TURNS="${MAX_TURNS:-}" \
+      -e RETRIEVER_PORT="${RETRIEVER_PORT:-}" \
+      -e START_LOCAL_EXPERT_VLLM="${START_LOCAL_EXPERT_VLLM:-}" \
+      -e EXPERT_MODEL="${EXPERT_MODEL:-}" \
+      -e EXPERT_VLLM_PORT="${EXPERT_VLLM_PORT:-}" \
+      -e OUT_ROOT="${OUT_ROOT:-}" \
+      -e SKIP_VLLM="${SKIP_VLLM:-}" \
       "${DOCKER_IMAGE}" \
       bash -lc "cd /workspace && CONTAINER_MODE=none bash training/run_small_orchestrator_demo.sh"
   fi
