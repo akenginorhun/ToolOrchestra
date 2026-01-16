@@ -114,9 +114,14 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       fi
     fi
     echo "[demo][container] running inside apptainer: ${APPTAINER_IMAGE}"
-    exec "${appt}" exec --rocm \
-      --no-mount hostfs \
+    # Use --contain to isolate container and prevent host library binding issues
+    # Manually bind ROCm devices and directories needed for execution
+    exec "${appt}" exec \
+      --contain \
+      --writable-tmpfs \
       --bind "$REPO_ROOT:$REPO_ROOT" \
+      --bind /dev/kfd:/dev/kfd \
+      --bind /dev/dri:/dev/dri \
       --pwd "$REPO_ROOT" \
       --env TOOLORCHESTRA_IN_CONTAINER=1 \
       --env OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
