@@ -97,7 +97,16 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
         export SINGULARITY_CACHEDIR="$APPTAINER_CACHEDIR"  # For older singularity versions
         mkdir -p "$APPTAINER_CACHEDIR"
         echo "[demo][container] using cache directory: ${APPTAINER_CACHEDIR}"
-        "${appt}" build --ignore-fakeroot-command "${APPTAINER_IMAGE}" "$REPO_ROOT/training/docker/Apptainerfile.rocm"
+        
+        # If Docker is available and the Docker image exists, convert it to Apptainer
+        # This avoids fakeroot/namespace issues on HPC clusters
+        if [[ "${have_docker}" == "1" ]] && docker image inspect "${DOCKER_IMAGE}" >/dev/null 2>&1; then
+          echo "[demo][container] converting Docker image to Apptainer (avoids HPC namespace issues)"
+          "${appt}" build "${APPTAINER_IMAGE}" "docker-daemon://${DOCKER_IMAGE}"
+        else
+          echo "[demo][container] building from Apptainerfile (may require fakeroot permissions)"
+          "${appt}" build --ignore-fakeroot-command "${APPTAINER_IMAGE}" "$REPO_ROOT/training/docker/Apptainerfile.rocm"
+        fi
       else
         echo "[demo][container] ERROR: APPTAINER_IMAGE not found: ${APPTAINER_IMAGE}"
         echo "[demo][container] Set BUILD_CONTAINER=1 to build it, or point APPTAINER_IMAGE to an existing .sif."
