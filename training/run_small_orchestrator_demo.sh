@@ -115,6 +115,9 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
     fi
     echo "[demo][container] running inside apptainer: ${APPTAINER_IMAGE}"
     exec "${appt}" exec --rocm \
+      --no-mount hostfs \
+      --bind "$REPO_ROOT:$REPO_ROOT" \
+      --pwd "$REPO_ROOT" \
       --env TOOLORCHESTRA_IN_CONTAINER=1 \
       --env OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
       --env OPENROUTER_EXPERTS_BY_KEY_JSON="${OPENROUTER_EXPERTS_BY_KEY_JSON:-}" \
