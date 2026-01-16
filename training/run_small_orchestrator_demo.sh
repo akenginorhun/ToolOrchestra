@@ -114,23 +114,15 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       fi
     fi
     echo "[demo][container] running inside apptainer: ${APPTAINER_IMAGE}"
-    # Bind ROCm installation directory (common paths: /opt/rocm, /opt/rocm-*)
-    ROCM_BINDS=""
-    for rocm_dir in /opt/rocm /opt/rocm-*; do
-      if [[ -d "$rocm_dir" ]]; then
-        ROCM_BINDS="$ROCM_BINDS --bind $rocm_dir:$rocm_dir"
-        echo "[demo][container] binding ROCm directory: $rocm_dir"
-        break
-      fi
-    done
+    # Set APPTAINER_CONTAINLIBS to prevent automatic host library binding that causes GLIBC conflicts
+    export APPTAINER_CONTAINLIBS=
+    export SINGULARITY_CONTAINLIBS=
     
     exec "${appt}" exec \
-      --contain \
-      --writable-tmpfs \
+      --rocm \
+      --no-home \
+      --cleanenv \
       --bind "$REPO_ROOT:$REPO_ROOT" \
-      --bind /dev/kfd:/dev/kfd \
-      --bind /dev/dri:/dev/dri \
-      $ROCM_BINDS \
       --pwd "$REPO_ROOT" \
       --env TOOLORCHESTRA_IN_CONTAINER=1 \
       --env OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
@@ -139,6 +131,8 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
       --env HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-}" \
       --env ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-}" \
       --env CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}" \
+      --env PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+      --env LD_LIBRARY_PATH="/usr/local/lib:/usr/lib/x86_64-linux-gnu:/usr/lib" \
       "${APPTAINER_IMAGE}" \
       bash -lc "cd '$REPO_ROOT' && CONTAINER_MODE=none bash training/run_small_orchestrator_demo.sh"
   fi
