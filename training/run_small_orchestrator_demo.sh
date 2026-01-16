@@ -24,6 +24,10 @@
 #   bash training/run_small_orchestrator_demo.sh
 #
 # Optional environment variables:
+#   CONTAINER_MODE          one of: auto|none|apptainer|docker (default: auto)
+#   BUILD_CONTAINER         set to 1 to build the container image before running (default: 0)
+#   APPTAINER_IMAGE         path to .sif to use/build (default: training/outputs/containers/toolorchestra_rocm.sif)
+#   DOCKER_IMAGE            docker image tag to use/build (default: toolorchestra-rocm:demo)
 #   ORCH_BASE_MODEL         HF model name to fine-tune as orchestrator (default: Qwen/Qwen3-8B)
 #   ORCH_TP_SIZE            tensor parallel size for orchestrator vLLM rollout (default: 2)
 #   ORCH_NUM_GPUS           number of GPUs the trainer should use on this node (default: 2)
@@ -60,6 +64,87 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT/training"
+
+# -------------------------------------------------------------------
+# Optional: run inside a ROCm container (recommended on AMD clusters)
+# -------------------------------------------------------------------
+# We do NOT attempt to "install Docker" or "install Apptainer" because that requires
+# admin rights / cluster policy. Instead, we:
+# - auto-detect apptainer/singularity or docker
+# - optionally build the image if BUILD_CONTAINER=1
+# - re-exec this same script inside the container
+CONTAINER_MODE="${CONTAINER_MODE:-auto}"          # auto|none|apptainer|docker
+BUILD_CONTAINER="${BUILD_CONTAINER:-0}"
+APPTAINER_IMAGE="${APPTAINER_IMAGE:-$REPO_ROOT/training/outputs/containers/toolorchestra_rocm.sif}"
+DOCKER_IMAGE="${DOCKER_IMAGE:-toolorchestra-rocm:demo}"
+
+if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; then
+  mkdir -p "$REPO_ROOT/training/outputs/containers"
+
+  have_apptainer=0
+  have_docker=0
+  command -v apptainer >/dev/null 2>&1 && have_apptainer=1
+  command -v singularity >/dev/null 2>&1 && have_apptainer=1
+  command -v docker >/dev/null 2>&1 && have_docker=1
+
+  if [[ "${CONTAINER_MODE}" == "apptainer" || ( "${CONTAINER_MODE}" == "auto" && "${have_apptainer}" == "1" ) ]]; then
+    appt="$(command -v apptainer || command -v singularity)"
+    if [[ ! -f "${APPTAINER_IMAGE}" ]]; then
+      if [[ "${BUILD_CONTAINER}" == "1" ]]; then
+        echo "[demo][container] building apptainer image: ${APPTAINER_IMAGE}"
+        "${appt}" build "${APPTAINER_IMAGE}" "$REPO_ROOT/training/docker/Apptainerfile.rocm"
+      else
+        echo "[demo][container] ERROR: APPTAINER_IMAGE not found: ${APPTAINER_IMAGE}"
+        echo "[demo][container] Set BUILD_CONTAINER=1 to build it, or point APPTAINER_IMAGE to an existing .sif."
+        exit 2
+      fi
+    fi
+    echo "[demo][container] running inside apptainer: ${APPTAINER_IMAGE}"
+    exec "${appt}" exec --rocm \
+      --env TOOLORCHESTRA_IN_CONTAINER=1 \
+      --env OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
+      --env OPENROUTER_EXPERTS_BY_KEY_JSON="${OPENROUTER_EXPERTS_BY_KEY_JSON:-}" \
+      --env OPENROUTER_MODEL_MAP_JSON="${OPENROUTER_MODEL_MAP_JSON:-}" \
+      --env HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-}" \
+      --env ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-}" \
+      --env CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}" \
+      "${APPTAINER_IMAGE}" \
+      bash -lc "cd '$REPO_ROOT' && CONTAINER_MODE=none bash training/run_small_orchestrator_demo.sh"
+  fi
+
+  if [[ "${CONTAINER_MODE}" == "docker" || ( "${CONTAINER_MODE}" == "auto" && "${have_docker}" == "1" ) ]]; then
+    # NOTE: Docker is often NOT allowed on HPC compute nodes; prefer apptainer if available.
+    if ! docker image inspect "${DOCKER_IMAGE}" >/dev/null 2>&1; then
+      if [[ "${BUILD_CONTAINER}" == "1" ]]; then
+        echo "[demo][container] building docker image: ${DOCKER_IMAGE}"
+        docker build -f "$REPO_ROOT/training/docker/Dockerfile.rocm" -t "${DOCKER_IMAGE}" "$REPO_ROOT"
+      else
+        echo "[demo][container] ERROR: docker image not found: ${DOCKER_IMAGE}"
+        echo "[demo][container] Set BUILD_CONTAINER=1 to build it, or set DOCKER_IMAGE to an existing image tag."
+        exit 2
+      fi
+    fi
+    echo "[demo][container] running inside docker: ${DOCKER_IMAGE}"
+    exec docker run --rm -it \
+      --device=/dev/kfd --device=/dev/dri --group-add video \
+      --ipc=host --shm-size=32g \
+      -v "$REPO_ROOT:/workspace" -w /workspace \
+      -e TOOLORCHESTRA_IN_CONTAINER=1 \
+      -e OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
+      -e OPENROUTER_EXPERTS_BY_KEY_JSON="${OPENROUTER_EXPERTS_BY_KEY_JSON:-}" \
+      -e OPENROUTER_MODEL_MAP_JSON="${OPENROUTER_MODEL_MAP_JSON:-}" \
+      -e HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-}" \
+      -e ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-}" \
+      -e CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}" \
+      "${DOCKER_IMAGE}" \
+      bash -lc "cd /workspace && CONTAINER_MODE=none bash training/run_small_orchestrator_demo.sh"
+  fi
+
+  echo "[demo][container] ERROR: No supported container runtime found for CONTAINER_MODE=${CONTAINER_MODE}."
+  echo "[demo][container] - If your cluster supports Apptainer/Singularity, use CONTAINER_MODE=apptainer."
+  echo "[demo][container] - If it supports Docker (rare on HPC nodes), use CONTAINER_MODE=docker."
+  exit 2
+fi
 
 # Ensure repo root is importable so `from LLM_CALL import ...` works from training modules.
 # (The training code imports `LLM_CALL.py` from the repo root.)
