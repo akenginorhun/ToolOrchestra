@@ -86,7 +86,11 @@ extras_require = {
 
 
 this_directory = Path(__file__).parent
-long_description = (this_directory / "README.md").read_text()
+readme_path = this_directory / "README.md"
+if not readme_path.exists():
+    # If README.md is not in training/, try the parent (repo root)
+    readme_path = this_directory.parent / "README.md"
+long_description = readme_path.read_text() if readme_path.exists() else ""
 
 setup(
     name="verl",
