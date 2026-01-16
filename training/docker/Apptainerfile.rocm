@@ -1,9 +1,9 @@
 Bootstrap: docker
+From: lmsysorg/sglang:v0.4.6.post5-rocm630
 
-# Support - Traing: fsdp; Inference: vllm
-# FROM: rocm/vllm:rocm6.2_mi300_ubuntu20.04_py3.9_vllm_0.6.4
-# Support - Traing: fsdp; Inference: vllm, sglang
-FROM lmsysorg/sglang:v0.4.5-rocm630
+# Support - Training: fsdp; Inference: vllm
+# Alternative base: rocm/vllm:rocm6.2_mi300_ubuntu20.04_py3.9_vllm_0.6.4
+# Support - Training: fsdp; Inference: vllm, sglang
 
 %environment
     export PYTORCH_ROCM_ARCH="gfx90a;gfx942"
@@ -11,6 +11,9 @@ FROM lmsysorg/sglang:v0.4.5-rocm630
     export HIPCC_COMPILE_FLAGS_APPEND="--amdgpu-target=gfx90a;gfx942 -D__HIP_PLATFORM_AMD__"
     export CFLAGS="-D__HIP_PLATFORM_AMD__"
     export CXXFLAGS="-D__HIP_PLATFORM_AMD__"
+
+%files
+    . /sgl-workspace
 
 %post
     # Create source directory
@@ -26,7 +29,7 @@ FROM lmsysorg/sglang:v0.4.5-rocm630
     rm -rf /opt/src/vllm
 
     # Install dependencies
-    pip install "tensordict<0.6" --no-deps
+    pip install "tensordict==0.6.2" --no-deps
     pip install accelerate \
         codetiming \
         datasets \
@@ -37,20 +40,16 @@ FROM lmsysorg/sglang:v0.4.5-rocm630
         peft \
         "pyarrow>=15.0.0" \
         pylatexenc \
-        "ray[data,train,tune,serve]" \
+        "ray[data,train,tune,serve]<2.45.0" \
         torchdata \
         transformers \
         wandb \
         orjson \
         pybind11
 
-    # Clone and install verl from GitHub
-    cd /opt
-    git clone https://github.com/volcengine/verl.git
-    cd verl
-    # Uncomment to use a specific version
-    # git checkout v0.3.0.post0
-    pip install -e . --no-deps
-
     # Install torch_memory_saver
     pip install git+https://github.com/ExtremeViscent/torch_memory_saver.git --no-deps
+
+    # Install the local repository code
+    cd /sgl-workspace/training
+    pip install -e . --no-deps
