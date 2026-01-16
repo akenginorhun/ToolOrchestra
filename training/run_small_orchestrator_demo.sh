@@ -97,7 +97,7 @@ if [[ -z "${TOOLORCHESTRA_IN_CONTAINER:-}" && "${CONTAINER_MODE}" != "none" ]]; 
         export SINGULARITY_CACHEDIR="$APPTAINER_CACHEDIR"  # For older singularity versions
         mkdir -p "$APPTAINER_CACHEDIR"
         echo "[demo][container] using cache directory: ${APPTAINER_CACHEDIR}"
-        "${appt}" build "${APPTAINER_IMAGE}" "$REPO_ROOT/training/docker/Apptainerfile.rocm"
+        "${appt}" build --ignore-fakeroot-command "${APPTAINER_IMAGE}" "$REPO_ROOT/training/docker/Apptainerfile.rocm"
       else
         echo "[demo][container] ERROR: APPTAINER_IMAGE not found: ${APPTAINER_IMAGE}"
         echo "[demo][container] Set BUILD_CONTAINER=1 to build it, or point APPTAINER_IMAGE to an existing .sif."
